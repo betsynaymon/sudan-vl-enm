@@ -51,3 +51,5 @@ data/raw/*
 !data/raw/compiled_vl_presences.csv
 data/processed/*
 !data/processed/occurrences_thinned.csv
+
+!outputs/models/spatial_cv_folds.rds

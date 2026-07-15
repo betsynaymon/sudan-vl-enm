@@ -13,7 +13,7 @@
 #          data/processed/background_points.csv
 #          data/raw/ (retained covariate rasters + ecological mask)
 #          outputs/retained_vars.rds
-# Outputs: outputs/models/spatial_cv_folds.rds
+# Outputs: outputs/models/spatial_cv_folds.rds  (committed to repo)
 #          outputs/figures/spatial_cv_fold_map.png
 #          outputs/figures/spatial_cv_fold_map.pdf
 # ============================================================================
@@ -81,17 +81,35 @@ cat("\nMedian:", round(median(ranges_km)), "km\n")
 # severely imbalanced folds because most presences cluster in the Gedaref
 # corridor. 100 km is a pragmatic compromise: enough blocks to distribute
 # presences across folds while still grouping nearby points together.
+#
+# The fold object is committed to the repo so that cloning reproduces
+# the exact CV metrics reported in the dissertation. Delete the file to
+# regenerate from scratch — results will differ slightly because
+# cv_spatial's random block-to-fold assignment is sensitive to R's
+# global RNG state, which varies across sessions and platforms even
+# with the same seed parameter. The spatial structure and balance
+# will be comparable; only the specific fold membership changes.
 
-folds <- cv_spatial(
-  x         = pts_sf,
-  column    = "pa",
-  size      = BLOCK_SIZE_M,
-  k         = K_FOLDS,
-  hexagon   = FALSE,
-  selection = "random",
-  iteration = 200,
-  seed      = SEED
-)
+folds_path <- file.path(DIR_MODELS, "spatial_cv_folds.rds")
+
+if (file.exists(folds_path)) {
+  cat("Loading existing fold assignments from", folds_path, "\n")
+  folds <- readRDS(folds_path)
+} else {
+  folds <- cv_spatial(
+    x         = pts_sf,
+    column    = "pa",
+    size      = BLOCK_SIZE_M,
+    k         = K_FOLDS,
+    hexagon   = FALSE,
+    selection = "random",
+    iteration = 200,
+    seed      = SEED
+  )
+
+  saveRDS(folds, folds_path)
+  cat("Generated and saved new fold assignments\n")
+}
 
 cat("\nFinal configuration:\n")
 cat("  Block size:", BLOCK_SIZE_M / 1000, "km\n")
@@ -127,11 +145,9 @@ ggsave(file.path(DIR_FIGS, "spatial_cv_fold_map.png"), p,
        width = 8, height = 6, dpi = 300)
 cat("Saved fold map\n")
 
-# --------------------------------- Save -------------------------------------
+# --------------------------------- Summary ----------------------------------
 
-saveRDS(folds, file.path(DIR_MODELS, "spatial_cv_folds.rds"))
-
-cat("Saved fold object to", file.path(DIR_MODELS, "spatial_cv_folds.rds"), "\n")
+cat("Fold object:", file.path(DIR_MODELS, "spatial_cv_folds.rds"), "\n")
 cat("Contains:", length(folds$folds_list), "folds\n")
 cat("Fold sizes (test presences):",
     sapply(folds$folds_list, function(f) sum(pts_sf$pa[f[[2]]] == 1)), "\n")

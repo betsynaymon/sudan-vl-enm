@@ -1,0 +1,6 @@
+"mean","sd","variable","var_label"
+0.210959326530612,0.0233848540056887,"lst_night","LST night (°C)"
+0.0762479387755102,0.0147213706889463,"rainfall","Rainfall (mm/yr)"
+0.0586591428571429,0.0154590294354803,"slope","Slope (degrees)"
+0.00738830612244902,0.00262069679924477,"river_dist","Distance to river (m)"
+0.00681051020408167,0.00192883328635746,"vertisols","Vertisols (0/1)"
