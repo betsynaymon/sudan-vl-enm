@@ -157,11 +157,11 @@ From `python/02_covariates.ipynb`:
 | LST night (annual/wet/dry × 21 years) | 63 |
 | Rainfall (21 years) | 21 |
 | Tree cover (21 years) | 21 |
-| Long-term means | 12 |
-| **Subtotal** | **247** |
+| Long-term means | 11 |
+| **Subtotal** | **246** |
 
 From `python/01_study_area.ipynb`: 1 (ecological mask)
 
 From `python/04_2025_rasters.ipynb`: 2 (LST night 2025, rainfall 2025)
 
-**Total: 250 rasters** exported to `Google Drive > sudan_enm_covariates`
+**Total: 249 rasters** exported to `Google Drive > sudan_enm_covariates`
