@@ -87,7 +87,7 @@ All environmental covariates, administrative boundaries, and population data mus
 | Land surface temperature (day/night, annual/seasonal) | MODIS MOD11A1 via Google Earth Engine | 1 km |
 | NDVI (annual/seasonal) | MODIS MOD13A2 via Google Earth Engine | 1 km |
 | Rainfall | CHIRPS v2.0 via Google Earth Engine | 1 km (resampled from ~5 km) |
-| Slope | SRTM via `geodata::elevation_30s()` | 1 km (resampled from ~90 m) |
+| Slope/Elevation | NASA SRTM 30m via Google Earth Engine | 1 km (resampled from ~90 m) |
 | River distance | HydroSHEDS | 1 km |
 | Tree cover | MODIS MOD44B via Google Earth Engine | 1 km (resampled from 250 m) |
 | Vertisols | HWSD v2.0 (WRB2_CODE = 33) | 1 km |
