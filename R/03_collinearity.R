@@ -7,6 +7,8 @@
 #
 # Inputs:  data/raw/ (9 candidate covariate rasters + ecological mask)
 # Outputs: outputs/retained_vars.rds
+#          outputs/correlation_matrix.rds  (cached, speeds up reruns)
+#          outputs/collinearity_sample.rds (cached, speeds up reruns)
 #          outputs/figures/collinearity_correlation_matrix.png
 #          outputs/figures/collinearity_correlation_matrix.pdf
 # ============================================================================
