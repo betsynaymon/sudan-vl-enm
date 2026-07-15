@@ -12,7 +12,7 @@
 # Inputs:  data/processed/occurrences_thinned.csv
 #          data/processed/background_points.csv
 #          data/raw/ (retained covariate rasters + ecological mask)
-#          outputs/retained_vars.rds
+#          outputs/models/retained_vars.rds
 # Outputs: outputs/models/spatial_cv_folds.rds  (committed to repo)
 #          outputs/figures/spatial_cv_fold_map.png
 #          outputs/figures/spatial_cv_fold_map.pdf
@@ -51,7 +51,7 @@ pts_sf <- st_as_sf(pts, coords = c("longitude", "latitude"), crs = 4326)
 
 # --------------------------- Load covariates --------------------------------
 
-retained_vars <- readRDS(file.path(DIR_OUTPUTS, "retained_vars.rds"))
+retained_vars <- readRDS(file.path(DIR_MODELS, "retained_vars.rds"))
 cat("Retained:", paste(retained_vars, collapse = ", "), "\n")
 
 covs <- rast(file.path(DIR_COVARIATES, COV_FILES[retained_vars]))

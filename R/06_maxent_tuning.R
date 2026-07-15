@@ -13,7 +13,7 @@
 # Inputs:  data/processed/occurrences_thinned.csv
 #          data/processed/background_points.csv
 #          data/raw/ (covariate rasters — static + year-specific)
-#          outputs/retained_vars.rds
+#          outputs/models/retained_vars.rds
 #          outputs/models/spatial_cv_folds.rds
 # Outputs: outputs/tables/enmeval_results.csv
 #          outputs/models/selected_tuning.rds
@@ -48,7 +48,7 @@ bg  <- read.csv(here::here("data", "processed", "background_points.csv"))
 
 cat("Presences:", nrow(occ), "| Background:", nrow(bg), "\n")
 
-retained_vars <- readRDS(file.path(DIR_OUTPUTS, "retained_vars.rds"))
+retained_vars <- readRDS(file.path(DIR_MODELS, "retained_vars.rds"))
 
 covs <- rast(file.path(DIR_COVARIATES, COV_FILES[retained_vars]))
 names(covs) <- retained_vars

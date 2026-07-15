@@ -51,8 +51,8 @@ print(global(covs_masked, "notNA"))
 # This step is slow (~100k raster cells). Results are cached to disk so the
 # figure and VIF sections can be rerun without resampling.
 
-cor_mat_path <- file.path(DIR_OUTPUTS, "correlation_matrix.rds")
-sample_vals_path <- file.path(DIR_OUTPUTS, "collinearity_sample.rds")
+cor_mat_path <- file.path(DIR_MODELS, "correlation_matrix.rds")
+sample_vals_path <- file.path(DIR_MODELS, "collinearity_sample.rds")
 
 if (file.exists(sample_vals_path) && file.exists(cor_mat_path)) {
   cat("Loading cached collinearity sample and correlation matrix\n")
@@ -127,7 +127,7 @@ retained_vars <- c("slope", "river_dist", "vertisols", "lst_night", "rainfall")
 cat("\nFinal variable set VIF:\n")
 print(usdm::vif(sample_vals[, retained_vars]))
 
-saveRDS(retained_vars, file.path(DIR_OUTPUTS, "retained_vars.rds"))
+saveRDS(retained_vars, file.path(DIR_MODELS, "retained_vars.rds"))
 cat("Saved retained_vars.rds\n")
 
 # -------------------- Correlation matrix figure -----------------------------

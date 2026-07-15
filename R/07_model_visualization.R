@@ -11,7 +11,7 @@
 # Inputs:  outputs/models/maxent_final.rds
 #          outputs/models/selected_tuning.rds
 #          outputs/models/training_data.rds
-#          outputs/retained_vars.rds
+#          outputs/models/retained_vars.rds
 #          data/raw/ (LTM covariate rasters + ecological mask)
 #          data/processed/occurrences_thinned.csv
 # Outputs: outputs/surfaces/maxent_suitability.tif
@@ -57,7 +57,7 @@ cat("Model coefficients:", length(mod$betas), "\n")
 cat("Training presences:", nrow(occ_env),
     "| Background:", nrow(bg_env), "\n")
 
-retained_vars <- readRDS(file.path(DIR_OUTPUTS, "retained_vars.rds"))
+retained_vars <- readRDS(file.path(DIR_MODELS, "retained_vars.rds"))
 
 covs <- rast(file.path(DIR_COVARIATES, COV_FILES[retained_vars]))
 names(covs) <- retained_vars
