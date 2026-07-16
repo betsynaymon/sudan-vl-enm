@@ -46,11 +46,15 @@ folds   <- readRDS(file.path(DIR_MODELS, "spatial_cv_folds.rds"))
 suit_mx <- rast(file.path(DIR_SURFACES, "maxent_suitability.tif"))
 vars    <- readRDS(file.path(DIR_MODELS, "retained_vars.rds"))
 mod     <- readRDS(file.path(DIR_MODELS, "maxent_final.rds"))
+tuning  <- readRDS(file.path(DIR_MODELS, "selected_tuning.rds"))
 tt_raw  <- rast(here::here("data", "raw", "weiss_travel_time.tif"))
 mask_r  <- rast(file.path(DIR_COVARIATES, "ecological_mask_150mm.tif"))
 
+best_classes <- tolower(tuning$fc)
+
 cat("Presences:", nrow(train$occ_env), "\n")
 cat("Original background:", nrow(train$bg_env), "\n")
+cat("Tuning:", tuning$fc, "rm =", tuning$rm, "\n")
 
 # -------------------- Bias surface and resample -----------------------------
 
@@ -111,9 +115,9 @@ mod_biased <- maxnet(
   f    = maxnet.formula(
     p    = c(rep(1, nrow(p_mat)), rep(0, nrow(b_mat))),
     data = as.data.frame(rbind(p_mat, b_mat)),
-    classes = "lqh"
+    classes = best_classes
   ),
-  regmult = 1.0
+  regmult = tuning$rm
 )
 
 cat("Biased-bg model:", sum(mod_biased$betas != 0), "non-zero /",
@@ -161,9 +165,9 @@ for (k in 1:4) {
     f    = maxnet.formula(
       p    = c(rep(1, nrow(p_tr)), rep(0, nrow(b_tr))),
       data = as.data.frame(rbind(p_tr, b_tr)),
-      classes = "lqh"
+      classes = best_classes
     ),
-    regmult = 1.0
+    regmult = tuning$rm
   )
 
   test_data <- df_biased[idx_test, vars]
@@ -247,7 +251,7 @@ biased_arp_weighted <- global(pop_aligned * suit_biased_masked, "sum", na.rm = T
 biased_arp_maxsss   <- global(pop_aligned * (suit_biased_masked >= biased_maxsss), "sum", na.rm = TRUE)[[1]]
 biased_arp_p10      <- global(pop_aligned * (suit_biased_masked >= biased_p10), "sum", na.rm = TRUE)[[1]]
 
-# Original ARP (recomputed on masked surface)
+# Original ARP (recomputed on masked surface for consistency)
 orig_pred_occ <- predict(mod, newdata = train$occ_env[, vars], type = "cloglog")[, 1]
 orig_pred_bg  <- predict(mod, newdata = train$bg_env[, vars], type = "cloglog")[, 1]
 orig_p10 <- unname(quantile(orig_pred_occ, 0.10))
@@ -277,6 +281,10 @@ pct_shift <- round(100 * (biased_arp_weighted - orig_arp_weighted) / orig_arp_we
 cat("Risk-weighted shift (masked):", pct_shift, "%\n")
 
 # Unmasked ARP — full prediction surface across Sudan
+# This produces the 13M-to-17.7M bracket: the original model predicts across
+# the full covariate extent (effectively self-masking since desert gets ~0),
+# while the bias-corrected model assigns suitability to Nile-corridor areas
+# that share fragments of the Gedaref environmental profile.
 orig_arp_unmasked   <- global(pop_aligned * suit_mx, "sum", na.rm = TRUE)[[1]]
 biased_arp_unmasked <- global(pop_aligned * suit_biased, "sum", na.rm = TRUE)[[1]]
 
@@ -348,9 +356,9 @@ mod_log <- maxnet(
   f    = maxnet.formula(
     p    = c(rep(1, nrow(p_mat)), rep(0, nrow(b_mat))),
     data = as.data.frame(rbind(p_mat, b_mat)),
-    classes = "lqh"
+    classes = best_classes
   ),
-  regmult = 1.0
+  regmult = tuning$rm
 )
 
 suit_log <- predict(cov_stack_mean, mod_log, type = "cloglog",
@@ -405,7 +413,6 @@ sudan <- ne_countries(country = "Sudan", scale = 50, returnclass = "sf")
 occ   <- read.csv(here::here("data", "processed", "occurrences_thinned.csv"))
 
 suit_biased_sudan <- mask(suit_biased, vect(sudan))
-suit_biased_sudan <- mask(suit_biased_sudan, mask_r)
 
 pred_df <- as.data.frame(suit_biased_sudan, xy = TRUE)
 names(pred_df) <- c("x", "y", "suitability")

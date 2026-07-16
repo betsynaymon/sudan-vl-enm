@@ -246,9 +246,23 @@ res <- bind_rows(results)
 cat("\nModels evaluated:", nrow(res), "\n")
 
 # ----------------------------- Select model ---------------------------------
+# LQH CBI is flat across regularisation (0.80–0.89 over 0.5–4.0 rm), so
+# configurations are not meaningfully distinguishable on CV performance alone.
+# Selection among equivalent-performing configurations uses response curve
+# plausibility as a secondary criterion:
+#   - rm=1.5 produces a sharp LST night thermal threshold and humped rainfall
+#     response consistent with P. orientalis biology, both of which appear
+#     independently in RF and GBT comparators.
+#   - Higher rm (e.g. 2.0) penalises the hinge features that capture these
+#     ecological shapes and compensates by shifting weight to river distance —
+#     the one covariate all three algorithms disagree on and the accessibility
+#     diagnostic flagged as a geographic proxy.
+# Selecting rm=1.5 from within the range of equivalent CBI configurations
+# prioritises ecological interpretability over a small, non-significant CBI
+# difference.
 
 best <- res |>
-  filter(fc == "LQH", rm == 1.0)
+  filter(fc == "LQH", rm == 1.5)
 
 cat("Selected model:\n")
 cat("  Feature classes:", best$fc, "\n")

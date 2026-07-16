@@ -33,6 +33,10 @@ train   <- readRDS(file.path(DIR_MODELS, "training_data.rds"))
 folds   <- readRDS(file.path(DIR_MODELS, "spatial_cv_folds.rds"))
 suit_mx <- rast(file.path(DIR_SURFACES, "maxent_suitability.tif"))
 vars    <- readRDS(file.path(DIR_MODELS, "retained_vars.rds"))
+tuning  <- readRDS(file.path(DIR_MODELS, "selected_tuning.rds"))
+
+best_classes <- tolower(tuning$fc)
+cat("Tuning:", tuning$fc, "rm =", tuning$rm, "\n")
 
 # ----------------------- Subset presences -----------------------------------
 
@@ -102,9 +106,9 @@ mod_sub <- maxnet(
   f    = maxnet.formula(
     p    = c(rep(1, nrow(p_sub)), rep(0, nrow(b_sub))),
     data = as.data.frame(rbind(p_sub, b_sub)),
-    classes = "lqh"
+    classes = best_classes
   ),
-  regmult = 1.0
+  regmult = tuning$rm
 )
 
 cat("Refit model: ", sum(mod_sub$betas != 0), "non-zero /",
@@ -127,9 +131,9 @@ for (k in 1:4) {
     f    = maxnet.formula(
       p    = c(rep(1, nrow(p_tr)), rep(0, nrow(b_tr))),
       data = as.data.frame(rbind(p_tr, b_tr)),
-      classes = "lqh"
+      classes = best_classes
     ),
-    regmult = 1.0
+    regmult = tuning$rm
   )
 
   test_data <- df_sub[idx_test, vars]

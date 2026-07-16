@@ -104,7 +104,7 @@ if (file.exists(folds_path)) {
     hexagon   = FALSE,
     selection = "random",
     iteration = 200,
-    seed      = SEED
+    seed      = 1238L # selected for fold balance
   )
 
   saveRDS(folds, folds_path)
