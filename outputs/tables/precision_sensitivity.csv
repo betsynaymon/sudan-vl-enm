@@ -1,12 +1,12 @@
 "metric","full_model","subset"
 "Presences",98,90
 "Coefficients",13,13
-"CBI (spatial CV)",0.857,0.787
-"AUC (spatial CV)",0.776,0.848
-"Mean suitability",0.1406,0.1288
-"ARP risk-weighted",13964709,13680008
-"ARP maxSSS binary",12151501,13057163
-"ARP p10 binary",27444201,25909068
+"CBI (spatial CV)",0.873,0.787
+"AUC (spatial CV)",0.849,0.848
+"Mean suitability",0.1397,0.1288
+"ARP risk-weighted",13981495,13680008
+"ARP maxSSS binary",12169058,13057163
+"ARP p10 binary",27469385,25909068
 "p10 threshold",0.1541,0.1423
 "maxSSS threshold",0.3857,0.3655
 "Surface correlation (Pearson)",NA,0.994

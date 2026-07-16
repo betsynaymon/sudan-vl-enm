@@ -46,7 +46,8 @@ bg       <- read.csv(here::here("data", "processed", "background_points.csv"))
 cv_folds <- readRDS(file.path(DIR_MODELS, "spatial_cv_folds.rds"))
 mask_r   <- rast(file.path(DIR_COVARIATES, "ecological_mask_150mm.tif"))
 
-sudan       <- ne_countries(country = "Sudan", scale = 50, returnclass = "sf")
+adm0        <- gadm(country = "SDN", level = 0, path = here::here("data", "raw"))
+sudan       <- st_as_sf(adm0)
 pop_aligned <- rast(file.path(DIR_SURFACES, "worldpop_2025_aligned.tif"))
 total_pop   <- global(pop_aligned, "sum", na.rm = TRUE)[[1]]
 

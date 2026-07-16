@@ -98,4 +98,21 @@ ggsave(file.path(DIR_FIGS, "accessibility_bias_diagnostic.png"), p_acc,
        width = 7, height = 5, dpi = 300, bg = "white")
 cat("Saved accessibility_bias_diagnostic.png\n")
 
+# ------------------- Suitability-accessibility correlation ------------------
+
+suit_r <- rast(file.path(DIR_SURFACES, "maxent_suitability.tif"))
+
+tt_aligned <- resample(tt_raw, suit_r, method = "bilinear")
+
+set.seed(SEED)
+valid_cells <- which(!is.na(values(suit_r)) & !is.na(values(tt_aligned)))
+samp_idx <- sample(valid_cells, min(50000, length(valid_cells)))
+
+rho <- cor(values(suit_r)[samp_idx],
+           values(tt_aligned)[samp_idx],
+           method = "spearman")
+
+cat("\nSuitability-accessibility correlation (Spearman, 50k sample):",
+    round(rho, 3), "\n")
+
 cat("\n11_accessibility_bias_diagnostic.R complete\n")

@@ -65,7 +65,8 @@ names(covs) <- retained_vars
 mask_r <- rast(file.path(DIR_COVARIATES, "ecological_mask_150mm.tif"))
 covs_masked <- mask(covs, mask_r, maskvalues = 0)
 
-sudan <- ne_countries(country = "Sudan", scale = 50, returnclass = "sf")
+adm0  <- gadm(country = "SDN", level = 0, path = here::here("data", "raw"))
+sudan <- st_as_sf(adm0)
 
 # Shared label mapping for figures
 var_labels <- c(

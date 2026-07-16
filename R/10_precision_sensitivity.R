@@ -241,7 +241,7 @@ precision_summary <- data.frame(
                   "ARP p10 binary", "p10 threshold", "maxSSS threshold",
                   "Surface correlation (Pearson)"),
   full_model = c(98, 13,
-                 0.857, 0.776,
+                 0.873, 0.849,
                  round(global(suit_mx, "mean", na.rm = TRUE)[[1]], 4),
                  round(full_weighted), round(full_maxsss), round(full_p10),
                  round(mx_arp$threshold[mx_arp$metric == "p10"], 4),

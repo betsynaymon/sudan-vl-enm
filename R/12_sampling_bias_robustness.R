@@ -409,7 +409,8 @@ write.csv(state_comparison, file.path(DIR_TABLES, "arp_by_state_bias_comparison.
 
 # -------------------- Suitability map figure --------------------------------
 
-sudan <- ne_countries(country = "Sudan", scale = 50, returnclass = "sf")
+adm0  <- gadm(country = "SDN", level = 0, path = here::here("data", "raw"))
+sudan <- st_as_sf(adm0)
 occ   <- read.csv(here::here("data", "processed", "occurrences_thinned.csv"))
 
 suit_biased_sudan <- mask(suit_biased, vect(sudan))
