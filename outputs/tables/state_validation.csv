@@ -1,0 +1,19 @@
+"state","status","evidence","mean_suit","median_suit","max_suit","n_cells"
+"Sennar","Core endemic","Historical endemic belt",0.6123,0.6178,0.9999,41503
+"Al Qadarif","Core endemic","Principal endemic focus",0.5752,0.6085,1,65849
+"Blue Nile","Core endemic","Historical endemic belt",0.5696,0.6178,1,37478
+"South Kurdufan","Reported","Scattered foci",0.3819,0.3601,1,79569
+"West Kurdufan","Reported","Cited under regional Kordofan grouping",0.3153,0.2111,0.999,116089
+"White Nile","Reported","Evidence of shift to endemic status",0.2738,0.2529,0.9797,40605
+"Kassala","Core endemic","Historical endemic belt",0.269,0.2534,0.9591,47328
+"East Darfur","Reported","Darfur foci",0.2683,0.2461,0.9224,56074
+"Khartoum","Uncertain","Sporadic cases in 1960s; potentially imported currently",0.2343,0.204,0.9835,22103
+"Al Jazirah","Reported","Historical outbreaks; current scattered endemicity",0.1717,0.1358,0.9542,25189
+"South Darfur","Reported","Scattered foci",0.1229,0.1057,0.8879,79614
+"Central Darfur","Reported","Created 2012 from West and South Darfur; both documented",0.1101,0.065,0.8315,38212
+"River Nile","No documented","No published VL transmission",0.093,0.0512,0.8478,133601
+"North Kurdufan","Reported","Scattered foci",0.091,0.0486,0.9473,195888
+"West Darfur","Reported","Scattered historically-reported foci",0.0817,0.0321,0.8287,23324
+"Red Sea","Reported","New foci added to control strategy in 2017",0.0665,0.043,0.7752,211440
+"North Darfur","Reported","Secondary VL focus",0.0172,0.0038,0.6419,332068
+"Northern","No documented","No published VL transmission",0.0127,0.0046,0.5574,390420

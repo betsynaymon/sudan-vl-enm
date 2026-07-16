@@ -1,0 +1,5 @@
+"source","year_conditions","population_year","boundaries","arp_estimate","method"
+"Alvar 2006 (expert-derived)","2005","~2005","Pre-split","2.78M (incl. S. Sudan)","Expert/case-based"
+"This model (2005 covariates)","2005","2005","Current Sudan","5,855,221","ENM risk-weighted"
+"This model (LTM)","2000–2024","2025","Current Sudan","13,964,709","ENM risk-weighted"
+"Pigott 2014 (global BRT)","~2010","2010","Current Sudan","16,259,580","BRT binary (0.19)"

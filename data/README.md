@@ -65,7 +65,7 @@ raw/lst_{day|night}_{annual|dry|wet}_{year}_1km.tif
 raw/lst_{day|night}_{annual|dry|wet}_mean_2000_2024_1km.tif
 ```
 
-2025 single-year nighttime LST for the temporal sensitivity diagnostic, extracted in `python/04_2025_rasters.ipynb`:
+2025 single-year nighttime LST for the temporal sensitivity diagnostic (script 18), extracted in `python/04_2025_rasters.ipynb`:
 
 ```
 raw/lst_night_annual_2025_1km.tif
@@ -89,7 +89,7 @@ raw/rainfall_{year}_1km.tif
 raw/rainfall_mean_2000_2024_1km.tif
 ```
 
-2025 single-year rainfall for the temporal sensitivity diagnostic, extracted in `python/04_2025_rasters.ipynb`:
+2025 single-year rainfall for the temporal sensitivity diagnostic (script 18), extracted in `python/04_2025_rasters.ipynb`:
 
 ```
 raw/rainfall_2025_1km.tif
@@ -108,7 +108,7 @@ raw/treecover_mean_2000_2024_1km.tif
 
 **Travel Time to Nearest City (Weiss et al. 2018)**
 
-Used for sampling bias diagnostics and the accessibility-weighted null model. Not a model covariate. Source: Malaria Atlas Project (https://malariaatlas.org/research-project/accessibility-to-cities/).
+Used for sampling bias diagnostics (scripts 11–12) and the accessibility-weighted null model (script 13). Not a model covariate. Source: Malaria Atlas Project (https://malariaatlas.org/research-project/accessibility-to-cities/). Downloaded programmatically in `R/11_accessibility_bias_diagnostic.R` if not already present.
 
 ```
 raw/weiss_travel_time.tif
@@ -118,10 +118,18 @@ raw/weiss_travel_time.tif
 
 **WorldPop 2025 Constrained (100 m)**
 
-UN-adjusted constrained population estimates for Sudan. Source: WorldPop (https://www.worldpop.org/). Downloaded as the constrained individual countries dataset for Sudan.
+UN-adjusted constrained population estimates for Sudan. Used for the primary ARP estimation (script 08) and all downstream comparisons. Source: WorldPop (https://www.worldpop.org/). Downloaded programmatically in `R/08_pop_estimate.R` if not already present.
 
 ```
 raw/population/sdn_pop_2025_100m_constrained.tif
+```
+
+**WorldPop 2005 UN-adjusted (~100 m)**
+
+Historical population estimates for the 2005 hindcast comparison against Alvar et al. (2006). Source: WorldPop (https://www.worldpop.org/). Must be downloaded manually from the WorldPop archive.
+
+```
+raw/population/sdn_ppp_2005_UNadj.tif
 ```
 
 ### Administrative Boundaries

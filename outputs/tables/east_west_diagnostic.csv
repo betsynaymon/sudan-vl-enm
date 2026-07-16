@@ -1,0 +1,100 @@
+"longitude","latitude","year","source","state","region","suitability"
+36.049,13.964,2000,"Pigott_et_al_2014_Dryad","Al Qadarif","East",0.94270271062851
+36.13,13.65,2000,"Pigott_et_al_2014_Dryad","Al Qadarif","East",0.627597093582153
+35.417175,13.851414,2000,"Pigott_et_al_2014_Dryad","Al Qadarif","East",0.960540950298309
+33.51,14.46,2001,"Pigott_et_al_2014_Dryad","Al Jazirah","East",0.19360063970089
+35.4,14.03,2001,"Pigott_et_al_2014_Dryad","Al Qadarif","East",0.992042899131775
+35.417175,13.851414,2001,"Pigott_et_al_2014_Dryad","Al Qadarif","East",0.960540950298309
+35.46397,13.85924,2001,"elnaiem_et_al_2003_fig1","Al Qadarif","East",0.999959349632263
+35.44335,13.79193,2001,"elnaiem_et_al_2003_fig1","Al Qadarif","East",0.99582314491272
+35.81898,13.7217,2001,"elnaiem_et_al_2003_fig1","Al Qadarif","East",0.812930703163147
+35.92892,13.58708,2001,"elnaiem_et_al_2003_fig1","Al Qadarif","East",0.614081382751465
+36.10527,13.50514,2001,"elnaiem_et_al_2003_fig1","Al Qadarif","East",0.778059899806976
+36.1465,13.53441,2001,"elnaiem_et_al_2003_fig1","Al Qadarif","East",0.859911262989044
+35.05857,12.98131,2001,"elnaiem_et_al_2003_fig1","Al Qadarif","East",0.720749795436859
+34.99215,13.03106,2001,"elnaiem_et_al_2003_fig1","Al Qadarif","East",0.687911808490753
+34.95321,13.07496,2001,"elnaiem_et_al_2003_fig1","Al Qadarif","East",0.845138788223267
+35.22348,12.8145,2001,"elnaiem_et_al_2003_fig1","Sennar","East",0.795568764209747
+33.93,13.15,2002,"Pigott_et_al_2014_Dryad","Sennar","East",0.777810573577881
+35.4,14.03,2002,"Pigott_et_al_2014_Dryad","Al Qadarif","East",0.992042899131775
+33.63,13.55,2002,"Pigott_et_al_2014_Dryad","Sennar","East",0.586787641048431
+33.51,14.46,2002,"Pigott_et_al_2014_Dryad","Al Jazirah","East",0.19360063970089
+35.14426792,12.89855849,2002,"Hassan_et_al_2009","Al Qadarif","East",0.882593750953674
+35.384789,14.039674,2003,"Pigott_et_al_2014_Dryad","Al Qadarif","East",0.989536166191101
+27.72992493,11.03020054,2003,"Sharief_et_al_2019","West Kurdufan","East",0.496926009654999
+35.9508,12.87508,2003,"gerstl_et_al_2006_fig1","Al Qadarif","East",0.489434957504272
+35.368652,13.859414,2004,"Pigott_et_al_2014_Dryad","Al Qadarif","East",0.85073184967041
+35.382042,14.037342,2004,"Pigott_et_al_2014_Dryad","Al Qadarif","East",0.987492382526398
+35.747681,13.544541,2004,"Pigott_et_al_2014_Dryad","Al Qadarif","East",0.993713319301605
+35.94256,13.16219,2004,"gerstl_et_al_2006_fig1","Al Qadarif","East",0.945571601390839
+35.368652,13.859414,2005,"Pigott_et_al_2014_Dryad","Al Qadarif","East",0.85073184967041
+35.382042,14.037342,2005,"Pigott_et_al_2014_Dryad","Al Qadarif","East",0.987492382526398
+35.747681,13.544541,2005,"Pigott_et_al_2014_Dryad","Al Qadarif","East",0.993713319301605
+35.4833,12.6025,2005,"Hassan_et_al_2008","Sennar","East",0.451163619756699
+36.16317,13.63419,2005,"gerstl_et_al_2006_fig1","Al Qadarif","East",0.566325843334198
+35.368652,13.859414,2006,"Pigott_et_al_2014_Dryad","Al Qadarif","East",0.85073184967041
+36.121216,13.581921,2006,"Pigott_et_al_2014_Dryad","Al Qadarif","East",0.986369907855988
+35.747681,13.512497,2006,"Pigott_et_al_2014_Dryad","Al Qadarif","East",0.9993816614151
+36.17761,13.80385,2006,"gerstl_et_al_2006_fig1","Al Qadarif","East",0.743714213371277
+36.1574,12.9545,2007,"Pigott_et_al_2014_Dryad","Al Qadarif","East",NA
+33.5675,13.5671,2007,"Pigott_et_al_2014_Dryad","Sennar","East",0.48029175400734
+35.20442,13.77775,2007,"gerstl_et_al_2006_fig1","Al Qadarif","East",0.650584101676941
+36.1574,12.9545,2008,"Pigott_et_al_2014_Dryad","Al Qadarif","East",NA
+34.64565,13.49933,2008,"gerstl_et_al_2006_fig1","Al Qadarif","East",0.966775178909302
+36.1574,12.9545,2009,"Pigott_et_al_2014_Dryad","Al Qadarif","East",NA
+34.80648,13.22962,2009,"gerstl_et_al_2006_fig1","Al Qadarif","East",0.992507994174957
+32.4833,12.15,2010,"Pigott_et_al_2014_Dryad","White Nile","East",0.388093411922455
+35.34668,13.3536,2010,"gerstl_et_al_2006_fig1","Al Qadarif","East",0.970760822296143
+35.39089,14.08516,2010,"vandebogaart_et_al_2013_fig1","Al Qadarif","East",0.906748175621033
+35.43786,13.84901,2010,"vandebogaart_et_al_2013_fig2","Al Qadarif","East",0.999963462352753
+36.19726,13.51343,2010,"vandebogaart_et_al_2013_fig3","Al Qadarif","East",0.680221855640411
+34.3105,13.06599,2010,"vandebogaart_et_al_2013_fig4","Sennar","East",0.804918110370636
+33.87209,12.99142,2010,"vandebogaart_et_al_2013_fig5","Sennar","East",0.562579154968262
+25.34936,13.62793,2012,"Pigott_et_al_2014_Dryad","North Darfur","West",0.0409470982849598
+36.03361,13.99488,2011,"Mueller_et_al_2012_Fig2","Al Qadarif","East",0.999687790870667
+36.05911,13.93788,2011,"Mueller_et_al_2012_Fig2","Al Qadarif","East",0.99993371963501
+36.09312,13.87508,2011,"Mueller_et_al_2012_Fig2","Al Qadarif","East",0.970448851585388
+36.12996,13.8258,2011,"Mueller_et_al_2012_Fig2","Al Qadarif","East",0.996395707130432
+36.19419,13.76687,2011,"Mueller_et_al_2012_Fig2","Al Qadarif","East",0.933776259422302
+36.22442,13.71663,2011,"Mueller_et_al_2012_Fig2","Al Qadarif","East",0.949708759784698
+36.09406,13.74078,2011,"Mueller_et_al_2012_Fig2","Al Qadarif","East",0.860499799251556
+36.26882,13.66639,2011,"Mueller_et_al_2012_Fig2","Al Qadarif","East",0.784924268722534
+36.29338,13.60648,2011,"Mueller_et_al_2012_Fig2","Al Qadarif","East",0.724459052085876
+36.2811,13.54755,2011,"Mueller_et_al_2012_Fig2","Al Qadarif","East",0.550738155841827
+36.22064,13.52726,2011,"Mueller_et_al_2012_Fig2","Al Qadarif","East",0.795600831508636
+36.17152,13.50117,2011,"Mueller_et_al_2012_Fig2","Al Qadarif","East",0.882529079914093
+36.1668,13.55334,2011,"Mueller_et_al_2012_Fig2","Al Qadarif","East",0.973319172859192
+36.19514,13.59199,2011,"Mueller_et_al_2012_Fig2","Al Qadarif","East",0.78146493434906
+36.13657,13.64803,2011,"Mueller_et_al_2012_Fig2","Al Qadarif","East",0.625367403030396
+35.93725,13.61808,2011,"Mueller_et_al_2012_Fig2","Al Qadarif","East",0.660021066665649
+35.93064,13.71566,2011,"Mueller_et_al_2012_Fig2","Al Qadarif","East",0.889149010181427
+35.94576,13.763,2011,"Mueller_et_al_2012_Fig2","Al Qadarif","East",0.852421581745148
+36.0919,13.6238,2011,"Mueller_et_al_2012","Al Qadarif","East",0.955182611942291
+32.5,13.4,2011,"Widaa_et_al_2012","White Nile","East",0.531865239143372
+35.31575,12.85333,2011,"gerstl_et_al_2006_fig1","Al Qadarif","East",0.649865508079529
+35.2264,12.8313,2022,"IFRC_DREF_MDRSD031_2022","Al Qadarif","East",0.84219092130661
+34.63850236,13.42796295,2022,"IFRC_DREF_MDRSD031_2022","Al Qadarif","East",0.988726258277893
+36.08490968,13.62603662,2022,"IFRC_DREF_MDRSD031_2022","Al Qadarif","East",0.950725138187408
+35.74103895,13.511581,2022,"IFRC_DREF_MDRSD031_2022","Al Qadarif","East",0.988358557224274
+35.85408325,12.99704695,2022,"IFRC_DREF_MDRSD031_2022","Al Qadarif","East",0.997607886791229
+33.54144831,14.14818026,2022,"IFRC_DREF_MDRSD031_2022","Al Jazirah","East",0.138012632727623
+35.42846209,13.832493,2022,"IFRC_DREF_MDRSD031_2022","Al Qadarif","East",0.993391931056976
+35.38788452,14.0395699,2022,"IFRC_DREF_MDRSD031_2022","Al Qadarif","East",0.989536166191101
+24.87728825,12.05706289,2022,"Hamid_et_al_2025","South Darfur","West",0.0988112315535545
+35.42846209,13.832493,2013,"Adam_et_al_2014","Al Qadarif","East",0.993391931056976
+26.2503,15.228,2013,"Mohammed_et_al_2018","North Darfur","West",0.00831342674791813
+25.3101764,13.48865821,2013,"radio_dabanga_pr_2013","North Darfur","West",0.00855383649468422
+36.02643,13.67571,2013,"hassan_et_al_2020_fig1","Al Qadarif","East",0.560291111469269
+34.95673,13.0371,2013,"hassan_et_al_2020_fig2","Al Qadarif","East",0.736070334911346
+32.08722,14.63362,2013,"hassan_et_al_2020_fig3","White Nile","East",0.442610144615173
+32.54,15.89459,2013,"hassan_et_al_2020_fig4","Khartoum","East",0.0658079162240028
+36.1347,13.6516,2015,"Jibreel_et_al_2023","Al Qadarif","East",0.625367403030396
+25.3101764,13.48865821,2015,"radio_dabanga_pr_2015","North Darfur","West",0.00855383649468422
+35.1511,12.8799,2020,"Jibreel_et_al_2023","Al Qadarif","East",0.8117795586586
+35.1511,12.8799,2018,"Khogali_et_al_2024","Al Qadarif","East",0.8117795586586
+26.2503,15.228,2016,"Mohammed_et_al_2018","North Darfur","West",0.00831342674791813
+35.12329,14.05328,2014,"Mohamed_et_al_2019","Al Qadarif","East",0.776415348052979
+35.00059,14.01715,2014,"Mohamed_et_al_2019","Al Qadarif","East",0.855552196502686
+35.30479,13.9785,2014,"Mohamed_et_al_2019","Al Qadarif","East",0.875821053981781
+30.7903815,12.14403013,2014,"radio_dabanga_pr_2014","South Kurdufan","East",0.145682692527771
+34.93114201,13.62225011,2024,"sudan_tribune_293846_2024","Al Qadarif","East",0.999975442886353

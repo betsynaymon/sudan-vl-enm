@@ -1,6 +1,6 @@
 # Estimating Populations at Risk of Visceral Leishmaniasis in Sudan
 
-Ecological niche model estimating populations at risk of visceral leishmaniasis (VL) in Sudan at 1 km resolution, using publicly available environmental covariates under conditions of data scarcity. MaxEnt primary model with random forest and gradient boosted tree comparators and a 13-test robustness suite.
+Ecological niche model estimating populations at risk of visceral leishmaniasis (VL) in Sudan at 1 km resolution, using publicly available environmental covariates under conditions of data scarcity. MaxEnt primary model with random forest and gradient boosted tree comparators and a set of robustness and sensitivity tests.
 
 This repository contains the analysis pipeline for an MSc dissertation submitted to the London School of Economics and Political Science, Department of Methodology (Applied Social Data Science), August 2025.
 
@@ -13,7 +13,7 @@ sudan-vl-enm/
 │   ├── 01_covariate_setup.R
 │   ├── 02_spatial_thinning.R
 │   ├── ...
-│   └── 19_hindcast.R
+│   └── 20_east_west_diagnostic.R
 ├── python/                   # Google Earth Engine data acquisition notebooks
 │   ├── 01_study_area.ipynb
 │   ├── 02_covariates.ipynb
@@ -41,7 +41,7 @@ The analysis proceeds in three stages. The Python notebooks and map digitization
 
 ### Data Acquisition
 
-The **Python notebooks** (`python/`) were run in Google Colab to extract environmental covariates from Google Earth Engine. They are included as documentation of data provenance rather than steps to rerun locally.
+The **Python notebooks** (`python/`) were run in Google Colab to extract environmental covariates from Google Earth Engine. They are included as documentation of data provenance rather than steps to rerun locally. `04_2025_rasters.ipynb` extracts single-year 2025 LST night and rainfall rasters used by script 18 for the temporal sensitivity diagnostic.
 
 The **map digitization** workflow (`digitize_maps/`) extracts georeferenced VL occurrence points from published study maps. It is a standalone preprocessing step whose outputs feed into the compiled occurrence dataset.
 
@@ -51,9 +51,9 @@ All R scripts are in `R/` and should be run in numerical order. Shared configura
 
 **Data preparation (01–05):** Covariate alignment and stacking, spatial thinning of occurrence records, collinearity screening, background point sampling, and spatial cross-validation fold assignment.
 
-**Model fitting and estimation (06–08):** MaxEnt hyperparameter tuning via ENMeval with spatial block cross-validation, model visualization (suitability surface, response curves, variable importance), and population-at-risk estimation using WorldPop 2025 constrained population.
+**Model fitting and estimation (06–08):** MaxEnt hyperparameter tuning via spatial block cross-validation with year-matched covariate extraction, model visualization (suitability surface, response curves, variable importance), and population-at-risk estimation using WorldPop 2025 constrained population.
 
-**Robustness suite (09–19):** Thirteen tests spanning signal validation, data robustness, model robustness, algorithm robustness, external validation, confound assessment, and scope diagnostics:
+**Robustness suite (09–20):** Thirteen tests spanning signal validation, data robustness, model robustness, algorithm robustness, external validation, confound assessment, and scope diagnostics:
 
 | Script | Test | Category |
 |--------|------|----------|
@@ -68,6 +68,7 @@ All R scripts are in `R/` and should be run in numerical order. Shared configura
 | 17 | Gradient boosted tree comparator | Algorithm robustness |
 | 18 | 2025 single-year projection | Model robustness |
 | 19 | 2005 hindcast | External validation |
+| 20 | East-west diagnostic | Scope diagnostics |
 
 ## Data
 
@@ -77,6 +78,7 @@ All R scripts are in `R/` and should be run in numerical order. Shared configura
 |------|-------------|
 | `data/raw/compiled_vl_presences.csv` | Compiled VL occurrence records from published literature and digitized maps |
 | `data/processed/occurrences_thinned.csv` | Spatially thinned occurrence records (5 km thinning distance) |
+| `outputs/models/spatial_cv_folds.rds` | Spatial block CV fold assignments (committed for exact reproducibility of CV metrics) |
 
 ### Requires download
 
@@ -84,22 +86,23 @@ All environmental covariates, administrative boundaries, and population data mus
 
 | Dataset | Source | Resolution |
 |---------|--------|------------|
-| Land surface temperature (day/night, annual/seasonal) | MODIS MOD11A1 via Google Earth Engine | 1 km |
-| NDVI (annual/seasonal) | MODIS MOD13A2 via Google Earth Engine | 1 km |
+| Land surface temperature (day/night, annual/seasonal) | MODIS MOD11A2 via Google Earth Engine | 1 km |
+| NDVI (annual/seasonal) | MODIS MOD13Q1 via Google Earth Engine | 1 km (resampled from 250 m) |
 | Rainfall | CHIRPS v2.0 via Google Earth Engine | 1 km (resampled from ~5 km) |
-| Slope/Elevation | NASA SRTM 30m via Google Earth Engine | 1 km (resampled from ~90 m) |
-| River distance | HydroSHEDS | 1 km |
-| Tree cover | MODIS MOD44B via Google Earth Engine | 1 km (resampled from 250 m) |
-| Vertisols | HWSD v2.0 (WRB2_CODE = 33) | 1 km |
-| Travel time to nearest city | Weiss et al. (2018) | 1 km |
-| Population | WorldPop 2025 constrained | 100 m |
-| Administrative boundaries | GADM v4.1 (levels 0 and 1) | — |
+| Elevation and slope | SRTM via Google Earth Engine | 1 km (resampled from ~30 m) |
+| River distance | HydroSHEDS via Google Earth Engine | 1 km |
+| Tree cover | Hansen Global Forest Change v1.13 via Google Earth Engine | 1 km (resampled from 30 m) |
+| Vertisols | HWSD v2.0 (WRB2_CODE = 33) via Google Earth Engine | 1 km |
+| Travel time to nearest city | Weiss et al. (2018) via Malaria Atlas Project | 1 km |
+| Population (2025) | WorldPop 2025 constrained | 100 m |
+| Population (2005) | WorldPop 2005 UN-adjusted | ~100 m |
+| Administrative boundaries | GADM v4.1 (levels 0 and 1) via `geodata` R package | — |
 
 ## Requirements
 
 ### R
 
-Core packages: `maxnet`, `ENMeval`, `blockCV`, `ranger`, `gbm`, `terra`, `sf`, `dplyr`, `ggplot2`, `patchwork`, `ggspatial`, `geodata`
+Core packages: `maxnet`, `blockCV`, `ranger`, `gbm`, `ecospat`, `terra`, `sf`, `dplyr`, `ggplot2`, `patchwork`, `ggspatial`, `geodata`, `rnaturalearth`, `tidyr`
 
 ### Python
 
