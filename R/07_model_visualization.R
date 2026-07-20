@@ -36,6 +36,8 @@ suppressPackageStartupMessages({
   library(ggspatial)
   library(rnaturalearth)
   library(ecospat)
+  library(geodata)
+  library(sf)
 })
 
 set.seed(SEED)
@@ -350,3 +352,132 @@ ggsave(file.path(DIR_FIGS, "mess_extrapolation.png"), p_mess,
 cat("Saved mess_extrapolation.png\n")
 
 cat("07_model_visualization.R complete\n")
+
+# ================== DISSERTATION FIGURE ======================================
+# Produces polished versions of the suitability and MESS maps using the
+# shared dissertation theme. 
+#
+# Outputs:
+#   outputs/figures/fig_suitability_mess.png  — combined panel, main text
+#   outputs/figures/fig_suitability_mess.pdf
+#   outputs/figures/fig_suitability.png       — standalone, full width
+#   outputs/figures/fig_suitability.pdf
+# =============================================================================
+
+library(patchwork)
+library(sf)
+source(here::here("R", "plotting_theme.R"))
+ 
+# ---- State boundaries (GADM level 1) ----
+adm1   <- gadm(country = "SDN", level = 1, path = here::here("data", "raw"))
+states <- st_as_sf(adm1)
+ 
+# ---- Occurrences as sf (for geom_sf consistency) ----
+occ_sf <- st_as_sf(occ, coords = c("longitude", "latitude"), crs = 4326)
+ 
+# ---- Clip MESS to Sudan boundary (cached raster may extend beyond) ----
+mess_r_clipped <- mask(mess_r, vect(sudan))
+mess_df_clipped <- as.data.frame(mess_r_clipped, xy = TRUE)
+names(mess_df_clipped) <- c("x", "y", "mess")
+mess_df_clipped <- mess_df_clipped[!is.na(mess_df_clipped$mess), ]
+mess_df_clipped$type <- ifelse(mess_df_clipped$mess < 0,
+                               "Extrapolation", "Interpolation")
+ 
+# ---- Shared extent ----
+map_xlim <- c(21.5, 39)
+map_ylim <- c(8, 24.5)
+ 
+ 
+# ---------- Panel (a): Suitability surface -----------------------------------
+ 
+p_suit_a <- ggplot() +
+  geom_sf(data = sudan, fill = "grey95", colour = NA) +
+  geom_raster(data = pred_df, aes(x = x, y = y, fill = suitability)) +
+  scale_fill_suitability() +
+  guides(fill = guide_colourbar(
+    barheight = unit(0.4, "cm"),
+    barwidth  = unit(3, "cm"),
+    title.position = "left",
+    title.theme = element_text(size = 7, face = "plain", vjust = 0.8),
+    label.theme = element_text(size = 6)
+  )) +
+  layer_admin1(data = states, colour = "black", linewidth = 0.15) +
+  layer_country(data = sudan, colour = "black", linewidth = 0.3) +
+  geom_sf(data = occ_sf, shape = 21, size = 1.0, stroke = 0.3,
+          fill = "white", colour = "black") +
+  ggspatial::annotation_scale(
+    location = "tl", width_hint = 0.15, text_cex = 0.5,
+    line_width = 0.3, pad_x = unit(0.2, "cm"), pad_y = unit(0.2, "cm")
+  ) +
+  labs(title = "(a) Predicted suitability") +
+  coord_sf(xlim = map_xlim, ylim = map_ylim, crs = 4326, expand = FALSE) +
+  theme_map() +
+  theme(
+    legend.position = "bottom",
+    legend.justification = "center",
+    legend.background = element_blank(),
+    legend.margin = margin(0, 0, 0, 0),
+    plot.title = element_text(size = 9, face = "plain", hjust = 0)
+  )
+ 
+ 
+# ---------- Panel (b): MESS (interpolation vs. extrapolation) ----------------
+ 
+p_mess_b <- ggplot() +
+  geom_sf(data = sudan, fill = "grey95", colour = NA) +
+  geom_raster(data = mess_df_clipped, aes(x = x, y = y, fill = type)) +
+  scale_fill_manual(values = pal_mess_binary, name = NULL) +
+  guides(fill = guide_legend(
+    keywidth  = unit(0.5, "cm"),
+    keyheight = unit(0.4, "cm"),
+    direction = "horizontal"
+  )) +
+  layer_admin1(data = states, colour = "black", linewidth = 0.15) +
+  layer_country(data = sudan, colour = "black", linewidth = 0.3) +
+  geom_sf(data = occ_sf, shape = 21, size = 1.0, stroke = 0.3,
+          fill = "white", colour = "black") +
+  labs(title = "(b) MESS analysis") +
+  coord_sf(xlim = map_xlim, ylim = map_ylim, crs = 4326, expand = FALSE) +
+  theme_map() +
+  theme(
+    legend.position = "bottom",
+    legend.justification = "center",
+    legend.background = element_blank(),
+    legend.text = element_text(size = 7),
+    legend.margin = margin(0, 0, 0, 0),
+    plot.title = element_text(size = 9, face = "plain", hjust = 0)
+  )
+ 
+ 
+# ---------- Combined figure --------------------------------------------------
+ 
+fig_suit_mess <- p_suit_a + p_mess_b
+ 
+save_fig(file.path(DIR_FIGS, "fig_suitability_mess.png"), fig_suit_mess,
+         width = FIG_WIDTH_FULL, height = 12)
+save_fig(file.path(DIR_FIGS, "fig_suitability_mess.pdf"), fig_suit_mess,
+         width = FIG_WIDTH_FULL, height = 12)
+cat("Saved fig_suitability_mess\n")
+ 
+ 
+# ---------- Standalone suitability (full width) ------------------------------
+# Legend stays inside the map here -- plenty of room at full width.
+ 
+p_suit_full <- ggplot() +
+  geom_sf(data = sudan, fill = "grey95", colour = NA) +
+  geom_raster(data = pred_df, aes(x = x, y = y, fill = suitability)) +
+  scale_fill_suitability() +
+  layer_admin1(data = states, colour = "black", linewidth = 0.15) +
+  layer_country(data = sudan, colour = "black", linewidth = 0.3) +
+  geom_sf(data = occ_sf, shape = 21, size = 1.5, stroke = 0.4,
+          fill = "white", colour = "black") +
+  add_scalebar() +
+  add_north_arrow() +
+  coord_sf(xlim = map_xlim, ylim = map_ylim, crs = 4326, expand = FALSE) +
+  theme_map()
+ 
+save_fig(file.path(DIR_FIGS, "fig_suitability.png"), p_suit_full,
+         width = FIG_WIDTH_FULL, height = FIG_HEIGHT_MAP)
+save_fig(file.path(DIR_FIGS, "fig_suitability.pdf"), p_suit_full,
+         width = FIG_WIDTH_FULL, height = FIG_HEIGHT_MAP)
+cat("Saved fig_suitability (standalone)\n")
