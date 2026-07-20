@@ -89,10 +89,12 @@ p_acc <- ggplot(plot_df, aes(x = travel_time, fill = group)) +
   geom_density(alpha = 0.5) +
   scale_x_continuous(limits = c(0, quantile(tt_bg, 0.99, na.rm = TRUE))) +
   scale_fill_manual(values = c("Background" = "grey60", "Occurrences" = "firebrick")) +
-  labs(x = "Travel time to nearest city (minutes)",
-       y = "Density", fill = NULL) +
+  labs(title = "Distribution of geographic accessibility",
+      x = "Travel time to nearest city (minutes)",
+      y = "Relative density", fill = NULL) +
   theme_minimal(base_size = 11) +
-  theme(legend.position = "top")
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = 0.5))
 
 ggsave(file.path(DIR_FIGS, "accessibility_bias_diagnostic.png"), p_acc,
        width = 7, height = 5, dpi = 300, bg = "white")

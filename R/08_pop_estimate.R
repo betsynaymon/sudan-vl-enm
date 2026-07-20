@@ -162,10 +162,13 @@ p_thresh <- ggplot(thresh_df, aes(x = threshold, y = arp / 1e6)) +
   annotate("text", x = maxsss + 0.02, y = max(arp_by_thresh / 1e6) * 0.8,
            label = paste0("maxSSS (", round(maxsss, 3), ")"),
            hjust = 0, size = 3.2, colour = "firebrick") +
-  labs(x = "Suitability threshold",
+  labs(title = "Threshold sensitivity of at-risk population estimate",
+       x = "Suitability threshold",
        y = "At-risk population (millions)") +
   theme_minimal(base_size = 12) +
-  theme(panel.grid.minor = element_blank())
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(colour = "grey92"),
+        plot.title = element_text(hjust = 0.5))
 
 ggsave(file.path(DIR_FIGS, "threshold_sensitivity_curve.png"), p_thresh,
        width = 7, height = 5, dpi = 300, bg = "white")
