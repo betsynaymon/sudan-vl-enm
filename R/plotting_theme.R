@@ -130,7 +130,7 @@ theme_dissertation <- function(base_size = BASE_SIZE,
   t <- theme_minimal(base_size = base_size, base_family = base_family) %+replace%
     theme(
       # — Text hierarchy —
-      plot.title         = element_text(size = TITLE_SIZE, face = "bold",
+      plot.title         = element_text(size = TITLE_SIZE, face = "plain",
                                         hjust = 0, margin = margin(b = 4)),
       plot.subtitle      = element_text(size = base_size, colour = "grey40",
                                         hjust = 0, margin = margin(b = 8)),
@@ -138,7 +138,7 @@ theme_dissertation <- function(base_size = BASE_SIZE,
                                         hjust = 1),
       axis.title         = element_text(size = base_size, colour = "grey20"),
       axis.text          = element_text(size = base_size - 1, colour = "grey30"),
-      strip.text         = element_text(size = base_size, face = "bold",
+      strip.text         = element_text(size = base_size, face = "plain",
                                         hjust = 0),
 
       # — Panel —

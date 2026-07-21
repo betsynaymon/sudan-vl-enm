@@ -21,11 +21,13 @@
 # ============================================================================
 
 source(here::here("R", "params.R"))
+source(here::here("R", "plotting_theme.R"))
 
 suppressPackageStartupMessages({
   library(terra)
   library(sf)
   library(dplyr)
+  library(maxnet)
   library(ggplot2)
   library(httr)
   library(geodata)
@@ -154,8 +156,8 @@ thresh_df <- data.frame(
 
 p_thresh <- ggplot(thresh_df, aes(x = threshold, y = arp / 1e6)) +
   geom_line(linewidth = 0.8) +
-  geom_vline(xintercept = p10,    linetype = "dashed", colour = "steelblue") +
-  geom_vline(xintercept = maxsss, linetype = "dashed", colour = "firebrick") +
+  geom_vline(xintercept = p10,    linetype = "dashed", colour = col_p10) +
+  geom_vline(xintercept = maxsss, linetype = "dashed", colour = col_maxsss) +
   annotate("text", x = p10 + 0.02,    y = max(arp_by_thresh / 1e6) * 0.9,
            label = paste0("p10 (", round(p10, 3), ")"),
            hjust = 0, size = 3.2, colour = "steelblue") +
@@ -165,13 +167,13 @@ p_thresh <- ggplot(thresh_df, aes(x = threshold, y = arp / 1e6)) +
   labs(title = "Threshold sensitivity of at-risk population estimate",
        x = "Suitability threshold",
        y = "At-risk population (millions)") +
-  theme_minimal(base_size = 12) +
+  theme_dissertation(gridlines = "both") + 
   theme(panel.grid.minor = element_blank(),
         panel.grid.major = element_line(colour = "grey92"),
         plot.title = element_text(hjust = 0.5))
 
-ggsave(file.path(DIR_FIGS, "threshold_sensitivity_curve.png"), p_thresh,
-       width = 7, height = 5, dpi = 300, bg = "white")
+save_fig(file.path(DIR_FIGS, "threshold_sensitivity_curve.png"), p_thresh,
+       width = FIG_WIDTH_FULL, height = FIG_HEIGHT_PLOT)
 cat("Saved threshold_sensitivity_curve.png\n")
 
 # ----------------------- State-level breakdown ------------------------------

@@ -481,3 +481,42 @@ save_fig(file.path(DIR_FIGS, "fig_suitability.png"), p_suit_full,
 save_fig(file.path(DIR_FIGS, "fig_suitability.pdf"), p_suit_full,
          width = FIG_WIDTH_FULL, height = FIG_HEIGHT_MAP)
 cat("Saved fig_suitability (standalone)\n")
+
+# ---------- Response curves + variable importance panel ----------------------
+# Stacked layout: response curves (full width, top) over importance (bottom).
+# Objects needed: response_data, perm_df (computed earlier in this script)
+ 
+# Panel (a): Response curves
+p_resp_diss <- ggplot(response_data, aes(x = value, y = suit)) +
+  geom_line(linewidth = 0.7, colour = pal_models["MaxEnt"]) +
+  geom_point(data = response_data |> filter(variable == "vertisols"),
+             size = 2, colour = pal_models["MaxEnt"]) +
+  facet_wrap(~ var_label, scales = "free_x", nrow = 1) +
+  labs(title = "(a) Response curves",
+       x = NULL, y = "Predicted suitability") +
+  theme_dissertation(gridlines = "both") +
+  theme(plot.title = element_text(size = 9, hjust = 0),
+        panel.grid.major = element_line(colour = "grey92"))
+ 
+# Panel (b): Variable importance
+p_imp_diss <- perm_df |>
+  mutate(var_label = factor(var_label, levels = rev(var_label))) |>
+  ggplot(aes(x = mean, y = var_label)) +
+  geom_segment(aes(x = mean - sd, xend = mean + sd, yend = var_label),
+               colour = pal_models["MaxEnt"], linewidth = 0.5) +
+  geom_point(size = 2.5, colour = pal_models["MaxEnt"]) +
+  labs(title = "(b) Variable importance",
+       x = "AUC drop", y = NULL) +
+  theme_dissertation() +
+  theme(plot.title = element_text(size = 9, hjust = 0),
+        panel.grid.major = element_line(colour = "grey92"))
+ 
+# Stack: response curves on top (taller), importance below (shorter)
+fig_resp_imp <- p_resp_diss / p_imp_diss +
+  plot_layout(heights = c(3, 2))
+ 
+save_fig(file.path(DIR_FIGS, "fig_response_importance.png"), fig_resp_imp,
+         width = FIG_WIDTH_FULL, height = 14)
+save_fig(file.path(DIR_FIGS, "fig_response_importance.pdf"), fig_resp_imp,
+         width = FIG_WIDTH_FULL, height = 14)
+cat("Saved fig_response_importance\n")

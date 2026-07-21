@@ -12,6 +12,7 @@
 # ============================================================================
 
 source(here::here("R", "params.R"))
+source(here::here("R", "plotting_theme.R"))
 
 suppressPackageStartupMessages({
   library(terra)
@@ -88,16 +89,16 @@ plot_df <- bind_rows(
 p_acc <- ggplot(plot_df, aes(x = travel_time, fill = group)) +
   geom_density(alpha = 0.5) +
   scale_x_continuous(limits = c(0, quantile(tt_bg, 0.99, na.rm = TRUE))) +
-  scale_fill_manual(values = c("Background" = "grey60", "Occurrences" = "firebrick")) +
+  scale_fill_manual(values = pal_two_group) +
   labs(title = "Distribution of geographic accessibility",
       x = "Travel time to nearest city (minutes)",
       y = "Relative density", fill = NULL) +
-  theme_minimal(base_size = 11) +
+  theme_dissertation() +
   theme(legend.position = "bottom",
         plot.title = element_text(hjust = 0.5))
 
-ggsave(file.path(DIR_FIGS, "accessibility_bias_diagnostic.png"), p_acc,
-       width = 7, height = 5, dpi = 300, bg = "white")
+save_fig(file.path(DIR_FIGS, "accessibility_bias_diagnostic.png"), p_acc,
+       width = FIG_WIDTH_FULL, height = FIG_HEIGHT_PLOT)
 cat("Saved accessibility_bias_diagnostic.png\n")
 
 # ------------------- Suitability-accessibility correlation ------------------
