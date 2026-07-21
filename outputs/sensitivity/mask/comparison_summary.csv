@@ -1,0 +1,14 @@
+"metric","primary","sensitivity"
+"presences","99","101"
+"background_extent","ecological mask (150mm)","full country (Sudan boundary)"
+"cbi_mean",NA,"0.801"
+"auc_mean",NA,"0.907"
+"pearson_r",NA,"0.978"
+"spearman_rho",NA,"0.956"
+"arp_rw_primary","13981495",NA
+"arp_rw_sensitivity",NA,"14256075"
+"arp_rw_pct_change",NA,"2"
+"p10_threshold_primary","0.1541",NA
+"p10_threshold_sensitivity",NA,"0.1178"
+"maxsss_threshold_primary","0.3857",NA
+"maxsss_threshold_sensitivity",NA,"0.2592"

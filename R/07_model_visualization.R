@@ -482,41 +482,71 @@ save_fig(file.path(DIR_FIGS, "fig_suitability.pdf"), p_suit_full,
          width = FIG_WIDTH_FULL, height = FIG_HEIGHT_MAP)
 cat("Saved fig_suitability (standalone)\n")
 
-# ---------- Response curves + variable importance panel ----------------------
-# Stacked layout: response curves (full width, top) over importance (bottom).
-# Objects needed: response_data, perm_df (computed earlier in this script)
- 
-# Panel (a): Response curves
-p_resp_diss <- ggplot(response_data, aes(x = value, y = suit)) +
-  geom_line(linewidth = 0.7, colour = pal_models["MaxEnt"]) +
-  geom_point(data = response_data |> filter(variable == "vertisols"),
-             size = 2, colour = pal_models["MaxEnt"]) +
-  facet_wrap(~ var_label, scales = "free_x", nrow = 1) +
-  labs(title = "(a) Response curves",
-       x = NULL, y = "Predicted suitability") +
-  theme_dissertation(gridlines = "both") +
-  theme(plot.title = element_text(size = 9, hjust = 0),
-        panel.grid.major = element_line(colour = "grey92"))
- 
-# Panel (b): Variable importance
-p_imp_diss <- perm_df |>
-  mutate(var_label = factor(var_label, levels = rev(var_label))) |>
-  ggplot(aes(x = mean, y = var_label)) +
+# ---------- Response curves + variable importance (2x3 grid) -----------------
+# Five response curves fill positions 1-5; variable importance fills the 6th
+# slot (bottom-right). Each variable gets a unique colour shared across both.
+# Objects needed: response_data, perm_df, var_labels (from earlier in script)
+
+# Covariate colour palette (Okabe-Ito derived, colourblind-safe)
+pal_covariates <- c(
+  "Slope (degrees)"          = "#CC79A7",
+  "Distance to river (m)"    = "#009E73",
+  "Vertisols (0/1)"          = "#D55E00",
+  "LST night (\u00b0C)"      = "#E69F00",
+  "Rainfall (mm/yr)"         = "#0072B2"
+)
+
+# Helper: one response curve panel
+make_response <- function(var, show_ylab = FALSE) {
+  lab <- var_labels[var]
+  col <- pal_covariates[lab]
+  d <- response_data |> filter(variable == var)
+
+  p <- ggplot(d, aes(x = value, y = suit)) +
+    geom_line(linewidth = 0.7, colour = col)
+
+  if (var == "vertisols") p <- p + geom_point(size = 2, colour = col)
+
+  p +
+    scale_y_continuous(limits = c(0, 1)) +
+    labs(title = lab, x = NULL,
+         y = if (show_ylab) "Predicted suitability" else NULL) +
+    theme_dissertation(gridlines = "both") +
+    theme(plot.title = element_text(size = 8, hjust = 0.5),
+          panel.grid.major = element_line(colour = "grey92"),
+          axis.text = element_text(size = 7))
+}
+
+# Build the five response panels (y-axis label on leftmost only)
+p1 <- make_response("slope",      show_ylab = TRUE)
+p2 <- make_response("river_dist")
+p3 <- make_response("vertisols")
+p4 <- make_response("lst_night",  show_ylab = TRUE)
+p5 <- make_response("rainfall")
+
+# Variable importance (6th slot, bottom-right)
+p_imp_grid <- perm_df |>
+  mutate(var_label = factor(var_label, levels = rev(perm_df$var_label))) |>
+  ggplot(aes(x = mean, y = var_label, colour = var_label)) +
   geom_segment(aes(x = mean - sd, xend = mean + sd, yend = var_label),
-               colour = pal_models["MaxEnt"], linewidth = 0.5) +
-  geom_point(size = 2.5, colour = pal_models["MaxEnt"]) +
-  labs(title = "(b) Variable importance",
-       x = "AUC drop", y = NULL) +
+               linewidth = 0.5, show.legend = FALSE) +
+  geom_point(size = 2.5) +
+  scale_colour_manual(values = pal_covariates, name = NULL) +
+  guides(colour = guide_legend(nrow = 1, override.aes = list(size = 3))) +
+  labs(title = "Variable importance", x = "AUC drop", y = NULL) +
   theme_dissertation() +
-  theme(plot.title = element_text(size = 9, hjust = 0),
-        panel.grid.major = element_line(colour = "grey92"))
- 
-# Stack: response curves on top (taller), importance below (shorter)
-fig_resp_imp <- p_resp_diss / p_imp_diss +
-  plot_layout(heights = c(3, 2))
- 
+  theme(plot.title = element_text(size = 8, hjust = 0.5),
+        panel.grid.major = element_line(colour = "grey92"),
+        axis.text.y = element_text(size = 7),
+        axis.text.x = element_text(size = 5),
+        axis.title.x = element_text(size = 7))
+
+# 2x3 grid, no legend needed (importance y-axis labels carry the mapping)
+fig_resp_imp <- (p1 + p2 + p3) / (p4 + p5 + p_imp_grid) &
+  theme(legend.position = "none")
+
 save_fig(file.path(DIR_FIGS, "fig_response_importance.png"), fig_resp_imp,
-         width = FIG_WIDTH_FULL, height = 14)
+         width = FIG_WIDTH_FULL, height = 12)
 save_fig(file.path(DIR_FIGS, "fig_response_importance.pdf"), fig_resp_imp,
-         width = FIG_WIDTH_FULL, height = 14)
+         width = FIG_WIDTH_FULL, height = 12)
 cat("Saved fig_response_importance\n")
