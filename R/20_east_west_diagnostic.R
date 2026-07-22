@@ -118,9 +118,7 @@ p_ew <- ggplot(plot_df, aes(x = region, y = suitability, colour = region)) +
            size = 3, colour = "grey40") +
   scale_colour_manual(values = c("East" = "#B2182B", "West" = "#2166AC")) +
   labs(x = NULL, y = "Predicted suitability (LTM surface)",
-       title = "Model performance at known VL locations",
-       subtitle = paste0(n_west, " western records fall below threshold \u2014 ",
-                         "ecologically distinct system")) +
+       title = "Model performance at known VL locations") +
   theme_minimal() +
   theme(legend.position = "none")
 
@@ -186,3 +184,33 @@ cat("Eastern presences (n=", n_east, "): median suitability", east_med, "\n")
 cat("Western presences (n=", n_west, "): median suitability", west_med, "\n")
 
 cat("\n20_east_west_diagnostic.R complete\n")
+
+# ================== DISSERTATION FIGURE =======================================
+# Objects needed: plot_df, region_summary, east_med, west_med,
+#                 n_east, n_west, p10, maxsss
+# =============================================================================
+source(here::here("R", "plotting_theme.R"))
+
+p_ew_diss <- ggplot(plot_df, aes(x = region, y = suitability, colour = region)) +
+  geom_jitter(width = 0.15, size = 2.5, alpha = 0.7) +
+  geom_hline(yintercept = maxsss, linetype = "dashed", colour = "grey40") +
+  geom_hline(yintercept = p10, linetype = "dotted", colour = "grey60") +
+  annotate("text", x = 2.35, y = p10 + 0.03, label = "p10 threshold",
+           size = 3, colour = "grey50", hjust = 1) +
+  annotate("text", x = 2.35, y = maxsss + 0.03, label = "maxSSS threshold",
+           size = 3, colour = "grey40", hjust = 1) +
+  scale_colour_manual(values = c("East" = "#B2182B", "West" = "#2166AC")) +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.25)) +
+  labs(x = NULL,
+       y = "Predicted suitability",
+       title = "Predicted suitability at documented VL locations") +
+  theme_dissertation(gridlines = "both") +
+  theme(legend.position = "none",
+        panel.grid.major = element_line(colour = "grey92"),
+        plot.title = element_text(hjust = 0.5))
+
+save_fig(file.path(DIR_FIGS, "fig_east_west.png"), p_ew_diss,
+         width = FIG_WIDTH_HALF * 1.5, height = FIG_HEIGHT_PLOT)
+save_fig(file.path(DIR_FIGS, "fig_east_west.pdf"), p_ew_diss,
+         width = FIG_WIDTH_HALF * 1.5, height = FIG_HEIGHT_PLOT)
+cat("Saved fig_east_west\n")
