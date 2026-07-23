@@ -18,6 +18,7 @@
 #          outputs/tables/arp_summary.csv
 #          outputs/tables/arp_by_state.csv
 #          outputs/figures/threshold_sensitivity_curve.png
+#          outputs/figures/threshold_sensitivity_curve.pdf
 # ============================================================================
 
 source(here::here("R", "params.R"))
@@ -174,7 +175,9 @@ p_thresh <- ggplot(thresh_df, aes(x = threshold, y = arp / 1e6)) +
 
 save_fig(file.path(DIR_FIGS, "threshold_sensitivity_curve.png"), p_thresh,
        width = FIG_WIDTH_FULL, height = FIG_HEIGHT_PLOT)
-cat("Saved threshold_sensitivity_curve.png\n")
+save_fig(file.path(DIR_FIGS, "threshold_sensitivity_curve.pdf"), p_thresh,
+       width = FIG_WIDTH_FULL, height = FIG_HEIGHT_PLOT)
+cat("Saved threshold_sensitivity_curve.png and threshold_sensitivity_curve.pdf\n")
 
 # ----------------------- State-level breakdown ------------------------------
 

@@ -192,9 +192,10 @@ cat("\n20_east_west_diagnostic.R complete\n")
 source(here::here("R", "plotting_theme.R"))
 
 p_ew_diss <- ggplot(plot_df, aes(x = region, y = suitability, colour = region)) +
-  geom_jitter(width = 0.15, size = 2.5, alpha = 0.7) +
-  geom_hline(yintercept = maxsss, linetype = "dashed", colour = "grey40") +
+  geom_point(position = position_jitter(width = 0.15, seed = 42),
+             size = 2.5, alpha = 0.7) +
   geom_hline(yintercept = p10, linetype = "dotted", colour = "grey60") +
+  geom_hline(yintercept = maxsss, linetype = "dashed", colour = "grey40") +
   annotate("text", x = 2.35, y = p10 + 0.03, label = "p10 threshold",
            size = 3, colour = "grey50", hjust = 1) +
   annotate("text", x = 2.35, y = maxsss + 0.03, label = "maxSSS threshold",
@@ -207,7 +208,8 @@ p_ew_diss <- ggplot(plot_df, aes(x = region, y = suitability, colour = region)) 
   theme_dissertation(gridlines = "both") +
   theme(legend.position = "none",
         panel.grid.major = element_line(colour = "grey92"),
-        plot.title = element_text(hjust = 0.5))
+        plot.title = element_text(hjust = 0.5, size = 10),
+        axis.text.x = element_text(size = 12))
 
 save_fig(file.path(DIR_FIGS, "fig_east_west.png"), p_ew_diss,
          width = FIG_WIDTH_HALF * 1.5, height = FIG_HEIGHT_PLOT)

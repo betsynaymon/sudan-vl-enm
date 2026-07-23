@@ -437,7 +437,7 @@ p_suit <- ggplot() +
   annotation_north_arrow(location = "tr", which_north = "true",
                          style = north_arrow_minimal()) +
   labs(title = "VL habitat suitability \u2014 accessibility-corrected background",
-       subtitle = "MaxEnt (LQH, rm = 1.0); background sampled \u221d 1/\u221a(1 + travel time)") +
+       subtitle = "MaxEnt (LQH, rm = 1.5); background sampled \u221d 1/\u221a(1 + travel time)") +
   coord_sf(xlim = c(21.5, 39), ylim = c(8.5, 23), crs = 4326) +
   theme_minimal() +
   theme(panel.grid = element_blank(),
@@ -515,3 +515,69 @@ ggsave(file.path(DIR_FIGS, "response_curves_bias_comparison.png"), p_curves,
 cat("Saved response_curves_bias_comparison.png\n")
 
 cat("12_sampling_bias_robustness.R complete\n")
+
+# ================== DISSERTATION FIGURE =======================================
+# Side-by-side: original vs accessibility-corrected suitability surface.
+# Objects needed: suit_mx, suit_biased, sudan (all from earlier in script)
+# =============================================================================
+
+library(patchwork)
+source(here::here("R", "plotting_theme.R"))
+
+# State boundaries
+adm1_sf <- st_as_sf(adm1)
+
+# Prepare both surfaces as data frames
+orig_masked <- mask(suit_mx, vect(sudan))
+orig_df <- as.data.frame(orig_masked, xy = TRUE)
+names(orig_df) <- c("x", "y", "suitability")
+orig_df <- orig_df[!is.na(orig_df$suitability), ]
+
+biased_masked <- mask(suit_biased, vect(sudan))
+biased_df <- as.data.frame(biased_masked, xy = TRUE)
+names(biased_df) <- c("x", "y", "suitability")
+biased_df <- biased_df[!is.na(biased_df$suitability), ]
+
+# Shared extent (cropped east to drop Red Sea island specks)
+map_xlim <- c(21.5, 38.5)
+map_ylim <- c(8, 24.5)
+
+# Helper: build one suitability map panel
+make_suit_panel <- function(df, title) {
+  ggplot() +
+    geom_sf(data = sudan, fill = "grey95", colour = NA) +
+    geom_raster(data = df, aes(x = x, y = y, fill = suitability)) +
+    scale_fill_suitability() +
+    guides(fill = guide_colourbar(
+      barheight = unit(0.4, "cm"),
+      barwidth  = unit(3, "cm"),
+      title.position = "left",
+      title.theme = element_text(size = 7, vjust = 0.8),
+      label.theme = element_text(size = 6)
+    )) +
+    geom_sf(data = adm1_sf, fill = NA, colour = "black", linewidth = 0.15) +
+    geom_sf(data = sudan, fill = NA, colour = "black", linewidth = 0.3) +
+    labs(title = title) +
+    coord_sf(xlim = map_xlim, ylim = map_ylim, crs = 4326, expand = FALSE) +
+    theme_map() +
+    theme(
+      legend.position = "bottom",
+      legend.justification = "center",
+      legend.background = element_blank(),
+      legend.margin = margin(0, 0, 0, 0),
+      plot.title = element_text(size = 9, hjust = 0)
+    )
+}
+
+p_orig   <- make_suit_panel(orig_df,   "(a) Uniform background")
+p_biased <- make_suit_panel(biased_df, "(b) Accessibility-corrected background")
+
+fig_bias_comparison <- p_orig + p_biased +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+
+save_fig(file.path(DIR_FIGS, "fig_bias_comparison.png"), fig_bias_comparison,
+         width = FIG_WIDTH_FULL, height = 12)
+save_fig(file.path(DIR_FIGS, "fig_bias_comparison.pdf"), fig_bias_comparison,
+         width = FIG_WIDTH_FULL, height = 12)
+cat("Saved fig_bias_comparison\n")
