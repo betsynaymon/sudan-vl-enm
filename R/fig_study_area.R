@@ -104,8 +104,13 @@ fig_study <- p_main +
                 left = 0.01, bottom = 0.58,
                 right = 0.28, top = 0.95)
 
-save_fig(file.path(DIR_FIGS, "fig_study_area.png"), fig_study,
+save_fig(file.path(DIR_FIGS, "fig_study_area.png"), p_main,
+          width = FIG_WIDTH_FULL, height = 14)
+save_fig(file.path(DIR_FIGS, "fig_study_area.pdf"), p_main,
+          width = FIG_WIDTH_FULL, height = 14)
+
+save_fig(file.path(DIR_FIGS, "fig_study_area_inset.png"), fig_study,
          width = FIG_WIDTH_FULL, height = 14)
-save_fig(file.path(DIR_FIGS, "fig_study_area.pdf"), fig_study,
+save_fig(file.path(DIR_FIGS, "fig_study_area_insent.pdf"), fig_study,
          width = FIG_WIDTH_FULL, height = 14)
 cat("Saved fig_study_area\n")

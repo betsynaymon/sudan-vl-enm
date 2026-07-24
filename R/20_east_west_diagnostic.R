@@ -203,8 +203,9 @@ p_ew_diss <- ggplot(plot_df, aes(x = region, y = suitability, colour = region)) 
   scale_colour_manual(values = c("East" = "#B2182B", "West" = "#2166AC")) +
   scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.25)) +
   labs(x = NULL,
-       y = "Predicted suitability",
-       title = "Predicted suitability at documented VL locations") +
+       y = "Predicted suitability" #,
+       #title = "Predicted suitability at documented VL locations"
+       ) +
   theme_dissertation(gridlines = "both") +
   theme(legend.position = "none",
         panel.grid.major = element_line(colour = "grey92"),

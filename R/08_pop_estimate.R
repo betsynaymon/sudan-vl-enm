@@ -165,7 +165,7 @@ p_thresh <- ggplot(thresh_df, aes(x = threshold, y = arp / 1e6)) +
   annotate("text", x = maxsss + 0.02, y = max(arp_by_thresh / 1e6) * 0.8,
            label = paste0("maxSSS (", round(maxsss, 3), ")"),
            hjust = 0, size = 3.2, colour = "firebrick") +
-  labs(title = "Threshold sensitivity of at-risk population estimate",
+  labs(#title = "Threshold sensitivity of at-risk population estimate",
        x = "Suitability threshold",
        y = "At-risk population (millions)") +
   theme_dissertation(gridlines = "both") + 

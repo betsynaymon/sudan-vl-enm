@@ -53,3 +53,8 @@ data/processed/*
 !data/processed/occurrences_thinned.csv
 
 !outputs/models/spatial_cv_folds.rds
+
+# ---- Misc Scripts ----
+R/21_ecological_mask_check.R
+R/fig_study_area.R
+

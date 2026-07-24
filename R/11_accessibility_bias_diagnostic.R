@@ -90,7 +90,7 @@ p_acc <- ggplot(plot_df, aes(x = travel_time, fill = group)) +
   geom_density(alpha = 0.5) +
   scale_x_continuous(limits = c(0, quantile(tt_bg, 0.99, na.rm = TRUE))) +
   scale_fill_manual(values = pal_two_group) +
-  labs(title = "Distribution of geographic accessibility",
+  labs(#title = "Distribution of geographic accessibility",
       x = "Travel time to nearest city (minutes)",
       y = "Relative density", fill = NULL) +
   theme_dissertation() +
