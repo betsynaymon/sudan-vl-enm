@@ -4,13 +4,13 @@
 "Blue Nile","Core endemic","Historical endemic belt",0.5643,0.6116,1,37985
 "South Kurdufan","Reported","Scattered foci",0.3863,0.3686,1,81462
 "West Kurdufan","Reported","Cited under regional Kordofan grouping",0.3153,0.2115,0.999,116133
-"White Nile","Reported","Evidence of shift to endemic status",0.2781,0.2572,0.9797,41372
+"White Nile","Core endemic","Evidence of shift to endemic status",0.2781,0.2572,0.9797,41372
 "Kassala","Core endemic","Historical endemic belt",0.2709,0.254,0.9953,47728
 "East Darfur","Reported","Darfur foci",0.2686,0.2473,0.9224,56499
-"Khartoum","Uncertain","Sporadic cases in 1960s; potentially imported currently",0.2343,0.204,0.9835,22103
+"Khartoum","Reported","Sporadic cases in 1960s; potentially imported currently",0.2343,0.204,0.9835,22103
 "Al Jazirah","Reported","Historical outbreaks; current scattered endemicity",0.1717,0.1358,0.9542,25189
 "South Darfur","Reported","Scattered foci",0.1225,0.1054,0.8879,80094
-"Central Darfur","Reported","Created 2012 from West and South Darfur; both documented",0.1101,0.065,0.8315,38212
+"Central Darfur","No documented","Created 2012 from West and South Darfur; both documented",0.1101,0.065,0.8315,38212
 "River Nile","No documented","No published VL transmission",0.0929,0.0512,0.8478,133683
 "North Kurdufan","Reported","Scattered foci",0.091,0.0486,0.9473,195888
 "West Darfur","Reported","Scattered historically-reported foci",0.0821,0.0324,0.8287,23455

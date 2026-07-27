@@ -114,3 +114,208 @@ save_fig(file.path(DIR_FIGS, "fig_study_area_inset.png"), fig_study,
 save_fig(file.path(DIR_FIGS, "fig_study_area_insent.pdf"), fig_study,
          width = FIG_WIDTH_FULL, height = 14)
 cat("Saved fig_study_area\n")
+
+############# SUDAN MAP ###############
+# Literature-classified VL endemic status by state, with Africa context inset.
+#   Core endemic             -> solid fill
+#   Reported cases/foci      -> hatched (45 deg stripe) over light fill
+#   No documented cases/foci -> plain grey
+# ============================================================================
+ 
+source(here::here("R", "params.R"))
+source(here::here("R", "plotting_theme.R"))
+ 
+suppressPackageStartupMessages({
+  library(sf)
+  library(ggplot2)
+  library(geodata)
+  library(rnaturalearth)
+  library(ggpattern)      # hatching / dot fills for sf polygons
+  library(ggrepel)        # non-overlapping state labels
+  library(patchwork)
+  library(dplyr)
+  library(tibble)
+})
+ 
+# ---------------------------- Figure constants -------------------------------
+ 
+# Endemic-status palette. Same hue family as pal_suitability so the figure reads
+# alongside the suitability map. Move into plotting_theme.R if reused.
+pal_endemic <- c(
+  "Core endemic"             = "#4393C3",   
+  "Reported cases/foci"      = "grey88",   # light salmon base under hatching
+  "No documented cases/foci" = "grey88"
+)
+ 
+HATCH_COL     <- "#4393C3"   # stripe colour for the "Reported" class
+HATCH_ANGLE   <- 45
+HATCH_SPACING <- 0.005       # npc units: smaller = denser hatching
+HATCH_DENSITY <- 0.28        # fraction of area covered by stripes
+HATCH_SIZE    <- 0.01        # stripe line width
+KEY_SCALE     <- 0.7         # pattern scaling inside the legend key
+ 
+map_xlim <- c(21.5, 38.5)
+map_ylim <- c(8, 24.5)
+ 
+# --------------------------- State classification ----------------------------
+# gadm_name must match GADM NAME_1 exactly; label is what appears on the map.
+status_levels <- c("Core endemic", "Reported cases/foci",
+                   "No documented cases/foci")
+ 
+state_status <- tribble(
+  ~gadm_name,       ~label,           ~status,
+  "Al Qadarif",     "Gedaref",        "Core endemic",
+  "Sennar",         "Sennar",         "Core endemic",
+  "Blue Nile",      "Blue Nile",      "Core endemic",
+  "White Nile",     "White Nile",     "Core endemic",
+  "Kassala",        "Kassala",        "Core endemic",
+  "South Kurdufan", "South Kordofan", "Reported cases/foci",
+  "West Kurdufan",  "West Kordofan",  "Reported cases/foci",
+  "North Kurdufan", "North Kordofan", "Reported cases/foci",
+  "East Darfur",    "East Darfur",    "Reported cases/foci",
+  "South Darfur",   "South Darfur",   "Reported cases/foci",
+  "West Darfur",    "West Darfur",    "Reported cases/foci",
+  "North Darfur",   "North Darfur",   "Reported cases/foci",
+  "Khartoum",       "Khartoum",       "Reported cases/foci",
+  "Al Jazirah",     "Gezira",         "Reported cases/foci",
+  "Red Sea",        "Red Sea",        "Reported cases/foci",
+  "Northern",       "Northern",       "No documented cases/foci",
+  "River Nile",     "River Nile",     "No documented cases/foci",
+  "Central Darfur", "Central Darfur", "No documented cases/foci"
+) |>
+  mutate(status = factor(status, levels = status_levels))
+ 
+# Per-state label offsets in decimal degrees. Only list states that need
+# nudging; everything else defaults to 0. The eastern cluster
+# (Khartoum / Gezira / Sennar / Gedaref) is the usual culprit.
+label_nudge <- tribble(
+  ~gadm_name,   ~nudge_x, ~nudge_y,
+  "Khartoum",        0.0,      0.0
+)
+ 
+# ------------------------------ Load data ------------------------------------
+ 
+adm0  <- gadm(country = "SDN", level = 0, path = here::here("data", "raw"))
+sudan <- st_as_sf(adm0)
+adm1  <- gadm(country = "SDN", level = 1, path = here::here("data", "raw"))
+states <- st_as_sf(adm1)
+ 
+# Verify the classification covers GADM exactly before plotting.
+missing_in_gadm <- setdiff(state_status$gadm_name, states$NAME_1)
+unclassified    <- setdiff(states$NAME_1, state_status$gadm_name)
+ 
+if (length(missing_in_gadm) > 0) {
+  stop("Classified names absent from GADM NAME_1: ",
+       paste(missing_in_gadm, collapse = ", "),
+       "\nGADM returned: ", paste(sort(states$NAME_1), collapse = ", "))
+}
+if (length(unclassified) > 0) {
+  stop("GADM states with no classification: ",
+       paste(unclassified, collapse = ", "),
+       "\nAdd them to state_status (e.g. a disputed-territory polygon).")
+}
+ 
+states_cls <- states |>
+  left_join(state_status, by = c("NAME_1" = "gadm_name")) |>
+  left_join(label_nudge, by = c("NAME_1" = "gadm_name")) |>
+  mutate(nudge_x = coalesce(nudge_x, 0), nudge_y = coalesce(nudge_y, 0))
+ 
+cat("States classified:",
+    paste(names(table(states_cls$status)), table(states_cls$status),
+          sep = " = ", collapse = " | "), "\n")
+ 
+# Label anchors: point_on_surface sits inside concave polygons, unlike centroid.
+# Warning about lon/lat is expected and irrelevant for label placement.
+lab_xy <- suppressWarnings(
+  st_coordinates(st_point_on_surface(st_geometry(states_cls)))
+)
+lab_df <- data.frame(
+  label = states_cls$label,
+  X     = lab_xy[, "X"] + states_cls$nudge_x,
+  Y     = lab_xy[, "Y"] + states_cls$nudge_y
+)
+ 
+# Africa countries for the inset
+africa <- ne_countries(scale = "medium", continent = "Africa",
+                       returnclass = "sf")
+ 
+# ------------------------------ Main map -------------------------------------
+ 
+p_main <- ggplot() +
+  # States: fill by status, hatching applied only to the "Reported" class
+  geom_sf_pattern(
+    data = states_cls,
+    aes(fill = status, pattern = status),
+    colour                    = "grey25",
+    linewidth                 = 0.15,
+    pattern_colour            = HATCH_COL,
+    pattern_fill              = HATCH_COL,
+    pattern_angle             = HATCH_ANGLE,
+    pattern_spacing           = HATCH_SPACING,
+    pattern_density           = HATCH_DENSITY,
+    pattern_size              = HATCH_SIZE,
+    pattern_key_scale_factor  = KEY_SCALE
+  ) +
+  scale_fill_manual(values = pal_endemic, breaks = status_levels, name = NULL) +
+  scale_pattern_manual(
+    values = c("Core endemic"             = "none",
+               "Reported cases/foci"      = "stripe",   # or "circle" for dots
+               "No documented cases/foci" = "none"),
+    breaks = status_levels, name = NULL
+  ) +
+  # Country outline on top, heavier stroke
+  geom_sf(data = sudan, fill = NA, colour = "black", linewidth = 0.3) +
+  # State labels with a white halo so they read over the solid dark fills
+  geom_text_repel(
+    data = lab_df, aes(x = X, y = Y, label = label),
+    size = 2.5, colour = "grey10",
+    bg.color = "white", bg.r = 0.14,
+    segment.colour = "grey40", segment.size = 0.2,
+    min.segment.length = 0.3, box.padding = 0.16, point.padding = 0,
+    force = 1.2, max.overlaps = Inf, seed = 1238
+  ) +
+  add_scalebar(location = "br", width_hint = 0.15,
+               pad_x = unit(0.2, "cm"), pad_y = unit(0.2, "cm")) +
+  coord_sf(xlim = map_xlim, ylim = map_ylim, crs = 4326, expand = FALSE) +
+  theme_map() +
+  theme(
+    legend.position      = "bottom",
+    legend.justification = "center",
+    legend.text          = element_text(size = 7),
+    legend.background    = element_blank(),
+    legend.margin        = margin(0, 0, 0, 0)
+  ) +
+  guides(
+    fill    = guide_legend(nrow = 1, direction = "horizontal"),
+    pattern = guide_legend(nrow = 1, direction = "horizontal")
+  )
+ 
+# ------------------------------ Africa inset ---------------------------------
+
+ 
+p_inset <- ggplot() +
+  geom_sf(data = africa, fill = "grey88", colour = "white", linewidth = 0.2) +
+  geom_sf(data = sudan, fill = "#B2182B", colour = "black", linewidth = 0.3) +
+  coord_sf(xlim = c(-18, 55), ylim = c(-5, 38), crs = 4326) +
+  theme_void() +
+  theme(
+    panel.background = element_rect(fill = "white", colour = NA),
+    panel.border     = element_rect(colour = "black", fill = NA,
+                                    linewidth = 0.4)
+  )
+ 
+# ------------------------------ Combine --------------------------------------
+# Inset sits over the empty north-west corner. Raise `bottom` to keep it clear
+# of Northern state; lower it to make the inset larger.
+ 
+fig_status <- p_main +
+  inset_element(p_inset,
+                left = 0.02, bottom = 0.70,
+                right = 0.26, top = 0.98)
+ 
+save_fig(file.path(DIR_FIGS, "fig_endemic_status.png"), fig_status,
+         width = FIG_WIDTH_FULL, height = FIG_HEIGHT_MAP)
+save_fig(file.path(DIR_FIGS, "fig_endemic_status.pdf"), fig_status,
+         width = FIG_WIDTH_FULL, height = FIG_HEIGHT_MAP)
+ 
+cat("Saved fig_endemic_status\n")
