@@ -78,7 +78,7 @@ cv_pred_path <- file.path(DIR_MODELS, "cv_fold_predictions.rds")
 
 if (file.exists(cv_pred_path)) {
   cat("Loading cached fold predictions\n")
-  pred_stack <- readRDS(cv_pred_path)
+  pred_stack <- readRDS(cv_pred_path, terra::unwrap)
 } else {
   pred_stack <- list()
 
@@ -107,7 +107,7 @@ if (file.exists(cv_pred_path)) {
     cat(" predicted.\n")
   }
 
-  saveRDS(pred_stack, cv_pred_path)
+  saveRDS(lapply(pred_stack, terra::wrap), cv_pred_path)
   cat("Computed and saved fold predictions\n")
 }
 
@@ -225,7 +225,64 @@ cat("\nFull-data model: weighted =",
     "| maxSSS =",
     format(round(mx_arp$arp[mx_arp$metric == "maxSSS"]), big.mark = ","), "\n")
 
-write.csv(fold_arps, file.path(DIR_TABLES, "arp_fold_uncertainty.csv"),
+# Append summary rows
+full_weighted <- mx_arp$arp[mx_arp$metric == "risk_weighted"]
+full_p10      <- mx_arp$arp[mx_arp$metric == "p10"]
+full_maxsss   <- mx_arp$arp[mx_arp$metric == "maxSSS"]
+
+fold_arps_out <- rbind(
+  fold_arps,
+  data.frame(fold_excluded = "Mean",
+             arp_weighted = mean(fold_arps$arp_weighted),
+             arp_p10      = mean(fold_arps$arp_p10),
+             arp_maxsss   = mean(fold_arps$arp_maxsss)),
+  data.frame(fold_excluded = "SD",
+             arp_weighted = sd(fold_arps$arp_weighted),
+             arp_p10      = sd(fold_arps$arp_p10),
+             arp_maxsss   = sd(fold_arps$arp_maxsss)),
+  data.frame(fold_excluded = "Full",
+             arp_weighted = full_weighted,
+             arp_p10      = full_p10,
+             arp_maxsss   = full_maxsss)
+)
+
+write.csv(fold_arps_out, file.path(DIR_TABLES, "arp_fold_uncertainty.csv"),
           row.names = FALSE)
 
 cat("\n14_uncertainty_surface.R complete\n")
+
+# -------------------- DISSERTATION FIGURE ---------------------------
+source(here::here("R", "plotting_theme.R"))
+
+adm0   <- gadm(country = "SDN", level = 0, path = here::here("data", "raw"))
+adm1   <- gadm(country = "SDN", level = 1, path = here::here("data", "raw"))
+sudan  <- st_as_sf(adm0)
+states <- st_as_sf(adm1)
+
+sd_masked <- mask(suit_sd, vect(sudan))
+sd_df <- as.data.frame(sd_masked, xy = TRUE, na.rm = TRUE)
+names(sd_df)[3] <- "sd"
+
+occ_pts <- train$occ_clean[, c("longitude", "latitude")]
+
+p_sd <- ggplot() +
+  geom_raster(data = sd_df, aes(x, y, fill = sd)) +
+  scale_fill_gradientn(
+    colours = c("#2166AC", "#67A9CF", "#D1E5F0", "#FDDBC7",
+                "#EF8A62", "#B2182B"),
+    na.value = "transparent",
+    name = "Prediction\nSD",
+    limits = c(0, max(sd_df$sd))
+  ) +
+  layer_admin1(states) +
+  layer_country(sudan) +
+  geom_point(data = occ_pts, aes(longitude, latitude),
+             colour = "black", fill = "white",
+             shape = 21, size = 1.5, stroke = 0.4) +
+  add_scalebar() +
+  coord_sf(xlim = c(21.5, 39), ylim = c(8.5, 22.5)) +
+  theme_map()
+
+ggsave(file.path(DIR_FIGS, "prediction_uncertainty_sd.png"), p_sd,
+       width = 16, height = 14, units = "cm", dpi = 300, bg = "white")
+cat("Saved fig_prediction_uncertainty_sd.png\n")
