@@ -20,6 +20,7 @@
 # ============================================================================
 
 source(here::here("R", "params.R"))
+source(here::here("R", "plotting_theme.R"))
 
 suppressPackageStartupMessages({
   library(terra)
@@ -282,3 +283,39 @@ ggsave(file.path(DIR_FIGS, "null_model_test_accessible.png"), p_null_acc,
 cat("Saved null_model_test_accessible.png\n")
 
 cat("\n13_null_model_test.R complete\n")
+
+# ========================= PANEL FIGURE =====================================
+
+library(patchwork)
+
+# Shared x-axis so both distributions are visually comparable
+x_limits <- c(-1, 1.05)
+
+p_uniform <- ggplot(null_results, aes(x = cbi)) +
+  geom_histogram(binwidth = 0.05, colour = "white") +
+  geom_vline(xintercept = obs_cbi, colour = "red", linewidth = 0.8,
+             linetype = "dashed") +
+  annotate("text", x = obs_cbi - 0.03, y = Inf, vjust = 2, hjust = 1,
+           label = paste0("Observed\nCBI = ", round(obs_cbi, 3)),
+           colour = "red", size = 3, fontface = "bold") +
+  coord_cartesian(xlim = x_limits) +
+  labs(x = "Continuous Boyce Index (CBI)", y = "Count",
+       title = "(a) Uniform null")
+
+p_accessible <- ggplot(null_results_acc, aes(x = cbi)) +
+  geom_histogram(binwidth = 0.05, colour = "white") +
+  geom_vline(xintercept = obs_cbi, colour = "red", linewidth = 0.8,
+             linetype = "dashed") +
+  annotate("text", x = obs_cbi - 0.03, y = Inf, vjust = 2, hjust = 1,
+           label = paste0("Observed\nCBI = ", round(obs_cbi, 3)),
+           colour = "red", size = 3, fontface = "bold") +
+  coord_cartesian(xlim = x_limits) +
+  labs(x = "Continuous Boyce Index (CBI)", y = "Count",
+       title = "(b) Accessibility-weighted null")
+
+p_null_panel <- p_uniform + p_accessible
+
+ggsave(file.path(DIR_FIGS, "fig_null_model_panel.png"), p_null_panel,
+         width = FIG_WIDTH_FULL, height = 8)
+
+cat("Saved fig_null_model_panel.png\n")
