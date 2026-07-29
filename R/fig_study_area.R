@@ -169,9 +169,9 @@ state_status <- tribble(
   "Blue Nile",      "Blue Nile",      "Core endemic",
   "White Nile",     "White Nile",     "Core endemic",
   "Kassala",        "Kassala",        "Core endemic",
-  "South Kurdufan", "South Kordofan", "Reported cases/foci",
-  "West Kurdufan",  "West Kordofan",  "Reported cases/foci",
-  "North Kurdufan", "North Kordofan", "Reported cases/foci",
+  "South Kurdufan", "South Kurdofan", "Reported cases/foci",
+  "West Kurdufan",  "West Kurdofan",  "Reported cases/foci",
+  "North Kurdufan", "North Kurdofan", "Reported cases/foci",
   "East Darfur",    "East Darfur",    "Reported cases/foci",
   "South Darfur",   "South Darfur",   "Reported cases/foci",
   "West Darfur",    "West Darfur",    "Reported cases/foci",
@@ -185,9 +185,7 @@ state_status <- tribble(
 ) |>
   mutate(status = factor(status, levels = status_levels))
  
-# Per-state label offsets in decimal degrees. Only list states that need
-# nudging; everything else defaults to 0. The eastern cluster
-# (Khartoum / Gezira / Sennar / Gedaref) is the usual culprit.
+# Per-state label offsets in decimal degrees. 
 label_nudge <- tribble(
   ~gadm_name,   ~nudge_x, ~nudge_y,
   "Khartoum",        0.0,      0.0
