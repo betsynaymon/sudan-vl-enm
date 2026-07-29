@@ -271,3 +271,53 @@ ggsave(file.path(DIR_FIGS, "lst_night_shift_diagnostic.png"), p_lst,
 cat("Saved lst_night_shift_diagnostic.png\n")
 
 cat("\n18_2025_surface.R complete\n")
+
+# ====================== COMBINED PANEL FIGURE ================================
+
+source(here::here("R", "plotting_theme.R"))
+
+states <- st_as_sf(gadm(country = "SDN", level = 1,
+                         path = here::here("data", "raw")))
+
+make_suit_panel <- function(r, label) {
+  df <- as.data.frame(r, xy = TRUE, na.rm = TRUE)
+  names(df)[3] <- "suitability"
+  ggplot() +
+    geom_raster(data = df, aes(x, y, fill = suitability)) +
+    scale_fill_suitability(
+      guide = guide_colorbar(title.position = "top", title.hjust = 0.5,
+                             barwidth = unit(4, "cm"), barheight = unit(0.3, "cm"))
+    ) +
+    layer_admin1(states) +
+    layer_country(sudan) +
+    coord_sf(xlim = c(21.5, 39), ylim = c(8.5, 22.5)) +
+    labs(title = label) +
+    theme_map()
+}
+
+p_a <- make_suit_panel(pred_ltm, "(a) Long-term mean") +
+  theme(legend.position = "bottom",
+        legend.justification = "center")
+
+p_b <- make_suit_panel(pred_2025_full, "(b) 2025 annual") +
+  add_scalebar() +
+  theme(legend.position = "none")
+
+p_c <- ggplot(hist_df, aes(x = lst, fill = surface)) +
+  geom_density(alpha = 0.4) +
+  geom_vline(xintercept = c(18, 25), linetype = "dashed", colour = "grey40") +
+  annotate("rect", xmin = 18, xmax = 25, ymin = -Inf, ymax = Inf,
+           alpha = 0.08, fill = "red") +
+  scale_fill_manual(values = c("Long-term mean" = "steelblue",
+                               "2025" = "firebrick")) +
+  labs(x = "LST night (\u00b0C)", y = "Density", fill = NULL,
+       title = "(c) Nighttime LST shift") +
+  theme_dissertation() +
+  theme(legend.position = "bottom")
+
+p_2025_panel <- p_a + p_b + p_c + plot_layout(ncol = 3)
+
+
+ggsave(file.path(DIR_FIGS, "fig_2025_projection_panel.png"), p_2025_panel,
+       width = FIG_WIDTH_FULL, height = FIG_HEIGHT_MAP, dpi = FIG_DPI, bg = "white")
+cat("Saved fig_2025_projection_panel.png\n")

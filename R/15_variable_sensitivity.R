@@ -483,9 +483,9 @@ p_shared <- ggplot(response_df |> filter(variable %in% shared_vars),
   geom_line(linewidth = 0.7) +
   facet_wrap(~ var_label, scales = "free_x", nrow = 2) +
   scale_colour_manual(values = variant_colours, name = "Variant") +
-  labs(x = NULL, y = "Habitat suitability (cloglog)",
-       title = "Marginal response curves \u2014 shared covariates across variants",
-       subtitle = "Each covariate varied across background range; others at median") +
+  labs(x = NULL, y = "Habitat suitability (cloglog)") +
+       #title = "Marginal response curves \u2014 shared covariates across variants",
+       #subtitle = "Each covariate varied across background range; others at median") +
   theme_minimal() +
   theme(strip.text = element_text(face = "bold"),
         legend.position = "bottom")

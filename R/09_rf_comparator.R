@@ -146,6 +146,7 @@ cat("\nBest: mtry =", best$mtry,
     "| CBI =", round(best$mean_cbi, 3),
     "| AUC =", round(best$mean_auc, 3), "\n")
 
+write.csv(best, file.path(DIR_TABLES, "rf_cv_metrics.csv"), row.names = FALSE)
 # ----------------------- Fit final RF model ---------------------------------
 
 best_mtry <- best$mtry

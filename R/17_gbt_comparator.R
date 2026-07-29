@@ -19,6 +19,8 @@
 #          outputs/surfaces/gbt_suitability.tif
 #          outputs/figures/suitability_three_models.png
 #          outputs/figures/pdp_three_models.png
+#          outputs/tables/three_model_comparison.csv
+
 # ============================================================================
 
 source(here::here("R", "params.R"))
@@ -246,11 +248,58 @@ cat(sprintf("%-20s %12s %12s %12s\n", "p10 binary",
     format(round(arp_comp$rf[arp_comp$metric == "p10"]), big.mark = ","),
     format(round(gbt_arp_p10), big.mark = ",")))
 
+# ---------------------- Three-model comparison CSV ----------------------------
+
+# MaxEnt CV metrics
+tuning    <- readRDS(file.path(DIR_MODELS, "selected_tuning.rds"))
+res_table <- read.csv(file.path(DIR_TABLES, "enmeval_results.csv"))
+mx_row    <- res_table |> filter(fc == tuning$fc, rm == tuning$rm)
+
+# RF CV metrics
+rf_cv <- read.csv(file.path(DIR_TABLES, "rf_cv_metrics.csv"))
+
+# Surface correlations (all three surfaces already loaded)
+valid_cells <- which(!is.na(values(suit_mx)) &
+                     !is.na(values(suit_rf)) &
+                     !is.na(values(suit_gbt)))
+set.seed(SEED)
+samp_idx <- sample(valid_cells, min(50000, length(valid_cells)))
+mx_vals  <- values(suit_mx)[samp_idx]
+rf_vals  <- values(suit_rf)[samp_idx]
+gbt_vals <- values(suit_gbt)[samp_idx]
+
+three_model <- data.frame(
+  metric = c("cbi", "auc", "arp_weighted", "arp_p10", "arp_maxsss",
+             "pearson_r", "spearman_rho"),
+  maxent = c(mx_row$cbi.val.avg, mx_row$auc.val.avg,
+             arp_comp$maxent[arp_comp$metric == "risk_weighted"],
+             arp_comp$maxent[arp_comp$metric == "p10"],
+             arp_comp$maxent[arp_comp$metric == "maxSSS"],
+             NA, NA),
+  rf = c(rf_cv$mean_cbi, rf_cv$mean_auc,
+         arp_comp$rf[arp_comp$metric == "risk_weighted"],
+         arp_comp$rf[arp_comp$metric == "p10"],
+         arp_comp$rf[arp_comp$metric == "maxSSS"],
+         cor(mx_vals, rf_vals),
+         cor(mx_vals, rf_vals, method = "spearman")),
+  gbt = c(best$mean_cbi, best$mean_auc,
+          gbt_arp_weighted, gbt_arp_p10, gbt_arp_maxsss,
+          cor(mx_vals, gbt_vals),
+          cor(mx_vals, gbt_vals, method = "spearman"))
+)
+
+write.csv(three_model, file.path(DIR_TABLES, "three_model_comparison.csv"),
+          row.names = FALSE)
+cat("Saved three_model_comparison.csv\n")
+
 # -------------------- Three-way suitability maps ----------------------------
 
-tuning <- readRDS(file.path(DIR_MODELS, "selected_tuning.rds"))
+source(here::here("R", "plotting_theme.R"))
+
 adm0   <- gadm(country = "SDN", level = 0, path = here::here("data", "raw"))
+adm1   <- gadm(country = "SDN", level = 1, path = here::here("data", "raw"))
 sudan  <- st_as_sf(adm0)
+states <- st_as_sf(adm1)
 
 suit_mx_m  <- mask(suit_mx, vect(sudan))
 suit_rf_m  <- mask(suit_rf, vect(sudan))
@@ -261,51 +310,35 @@ rf_df  <- as.data.frame(suit_rf_m, xy = TRUE, na.rm = TRUE)
 gbt_df <- as.data.frame(suit_gbt_m, xy = TRUE, na.rm = TRUE)
 names(mx_df)[3] <- names(rf_df)[3] <- names(gbt_df)[3] <- "suitability"
 
-suit_colours <- c("#2166AC", "#67A9CF", "#D1E5F0", "#FDDBC7",
-                  "#EF8A62", "#B2182B")
+make_panel <- function(df, label) {
+  ggplot() +
+    geom_raster(data = df, aes(x, y, fill = suitability)) +
+    scale_fill_suitability(guide = guide_colorbar(title.position = "top",
+                                               title.hjust = 0)) +
+    layer_admin1(states) +
+    layer_country(sudan) +
+    coord_sf(xlim = c(21.5, 39), ylim = c(8.5, 22.5)) +
+    labs(title = label) +
+    theme_map() +
+    theme(legend.position = "none")
+}
 
-p_mx <- ggplot() +
-  geom_sf(data = sudan, fill = "grey90", colour = "grey30", linewidth = 0.5) +
-  geom_raster(data = mx_df, aes(x, y, fill = suitability)) +
-  scale_fill_gradientn(colours = suit_colours, limits = c(0, 1),
-                       na.value = "transparent", name = "Habitat\nsuitability") +
-  geom_sf(data = sudan, fill = NA, colour = "grey30", linewidth = 0.5) +
-  coord_sf(xlim = c(21.5, 39), ylim = c(8.5, 22.5), crs = 4326) +
-  labs(title = paste0("MaxEnt (LQH, rm = ", tuning$rm, ")")) +
-  theme_minimal() +
-  theme(panel.grid = element_blank(), axis.title = element_blank(),
-        legend.position = "none")
-
-p_rf <- ggplot() +
-  geom_sf(data = sudan, fill = "grey90", colour = "grey30", linewidth = 0.5) +
-  geom_raster(data = rf_df, aes(x, y, fill = suitability)) +
-  scale_fill_gradientn(colours = suit_colours, limits = c(0, 1),
-                       na.value = "transparent", name = "Habitat\nsuitability") +
-  geom_sf(data = sudan, fill = NA, colour = "grey30", linewidth = 0.5) +
-  coord_sf(xlim = c(21.5, 39), ylim = c(8.5, 22.5), crs = 4326) +
-  labs(title = "Random Forest (mtry = 1)") +
-  theme_minimal() +
-  theme(panel.grid = element_blank(), axis.title = element_blank(),
-        legend.position = "none")
-
-p_gbt <- ggplot() +
-  geom_sf(data = sudan, fill = "grey90", colour = "grey30", linewidth = 0.5) +
-  geom_raster(data = gbt_df, aes(x, y, fill = suitability)) +
-  scale_fill_gradientn(colours = suit_colours, limits = c(0, 1),
-                       na.value = "transparent", name = "Habitat\nsuitability") +
-  geom_sf(data = sudan, fill = NA, colour = "grey30", linewidth = 0.5) +
-  annotation_scale(location = "bl", width_hint = 0.2) +
-  coord_sf(xlim = c(21.5, 39), ylim = c(8.5, 22.5), crs = 4326) +
-  labs(title = paste0("GBT (lr = ", best$lr, ", depth = ", best$depth, ")")) +
-  theme_minimal() +
-  theme(panel.grid = element_blank(), axis.title = element_blank())
+p_mx  <- make_panel(mx_df,  "(a) MaxEnt")
+p_rf  <- make_panel(rf_df,  "(b) Random Forest")
+p_gbt <- make_panel(gbt_df, "(c) Gradient Boosted Trees") +
+  add_scalebar()
 
 p_maps <- p_mx + p_rf + p_gbt +
   plot_layout(guides = "collect") &
-  theme(legend.position = "bottom")
+  theme(legend.position = "bottom",
+        plot.title = element_text(size = 9, hjust = 0),
+        legend.key.width = unit(2, "cm"),
+        legend.key.height = unit(0.25, "cm"),
+        legend.title = element_text(size = 8),
+        legend.text = element_text(size = 7))
 
 ggsave(file.path(DIR_FIGS, "suitability_three_models.png"), p_maps,
-       width = 15, height = 6, dpi = 300, bg = "white")
+       width = FIG_WIDTH_FULL, height = FIG_HEIGHT_MAP, dpi = 300, bg = "white")
 cat("Saved suitability_three_models.png\n")
 
 # -------------------- Partial dependence plots ------------------------------
