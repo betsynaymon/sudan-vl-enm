@@ -317,3 +317,69 @@ save_fig(file.path(DIR_FIGS, "fig_endemic_status.pdf"), fig_status,
          width = FIG_WIDTH_FULL, height = FIG_HEIGHT_MAP)
  
 cat("Saved fig_endemic_status\n")
+
+# ============================================================================
+# THREE ALGORITHM MAP
+# Rebuilds the three-way suitability comparison from cached surfaces.
+#
+# Inputs:  outputs/surfaces/{maxent,rf,gbt}_suitability.tif
+# Outputs: outputs/figures/suitability_three_models.png
+# ============================================================================
+
+source(here::here("R", "params.R"))
+source(here::here("R", "plotting_theme.R"))
+
+suppressPackageStartupMessages({
+  library(terra); library(sf); library(ggplot2)
+  library(patchwork); library(ggspatial); library(geodata)
+})
+
+suit_mx  <- rast(file.path(DIR_SURFACES, "maxent_suitability.tif"))
+suit_rf  <- rast(file.path(DIR_SURFACES, "rf_suitability.tif"))
+suit_gbt <- rast(file.path(DIR_SURFACES, "gbt_suitability.tif"))
+
+sudan  <- st_as_sf(gadm("SDN", level = 0, path = here::here("data", "raw")))
+states <- st_as_sf(gadm("SDN", level = 1, path = here::here("data", "raw")))
+
+to_df <- function(r) {
+  d <- as.data.frame(mask(r, vect(sudan)), xy = TRUE, na.rm = TRUE)
+  names(d)[3] <- "suitability"
+  d
+}
+
+XLIM <- c(21.5, 39); YLIM <- c(8.5, 22.5)
+
+make_panel <- function(df, label) {
+  ggplot() +
+    geom_raster(data = df, aes(x, y, fill = suitability)) +
+    scale_fill_suitability(guide = guide_colorbar(title.position = "top",
+                                                 title.hjust = 0)) +
+    layer_admin1(states) +
+    layer_country(sudan) +
+    coord_sf(xlim = XLIM, ylim = YLIM) +
+    labs(title = label) +
+    theme_map() +
+    theme(legend.position = "none")
+}
+
+p_maps <- make_panel(to_df(suit_mx),  "(a) MaxEnt") +
+          make_panel(to_df(suit_rf),  "(b) Random Forest") +
+          make_panel(to_df(suit_gbt), "(c) Gradient Boosted Trees") +
+          add_scalebar(location = "br") +
+  plot_layout(guides = "collect") &
+  theme(legend.position    = "bottom",
+        plot.title         = element_text(size = 9, hjust = 0,
+                                          margin = margin(b = 2)),
+        legend.key.width   = unit(2, "cm"),
+        legend.key.height  = unit(0.25, "cm"),
+        legend.title       = element_text(size = 8),
+        legend.text        = element_text(size = 7),
+        legend.margin      = margin(0, 0, 0, 0),
+        legend.box.spacing = unit(2, "pt"),
+        plot.margin        = margin(2, 2, 2, 2, unit = "pt"))
+
+panel_aspect <- diff(YLIM) / (diff(XLIM) * cos(mean(YLIM) * pi / 180))
+fig_h <- ((FIG_WIDTH_FULL - 0.5) / 3) * panel_aspect + 1.9
+
+ggsave(file.path(DIR_FIGS, "suitability_three_models.png"), p_maps,
+       width = FIG_WIDTH_FULL, height = FIG_WIDTH_HALF, dpi = 300, bg = "white")

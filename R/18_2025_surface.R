@@ -277,7 +277,9 @@ cat("\n18_2025_surface.R complete\n")
 source(here::here("R", "plotting_theme.R"))
 
 states <- st_as_sf(gadm(country = "SDN", level = 1,
-                         path = here::here("data", "raw")))
+                        path = here::here("data", "raw")))
+
+XLIM <- c(21.5, 39); YLIM <- c(8.5, 22.5)
 
 make_suit_panel <- function(r, label) {
   df <- as.data.frame(r, xy = TRUE, na.rm = TRUE)
@@ -285,39 +287,65 @@ make_suit_panel <- function(r, label) {
   ggplot() +
     geom_raster(data = df, aes(x, y, fill = suitability)) +
     scale_fill_suitability(
+      name  = "Habitat suitability",
       guide = guide_colorbar(title.position = "top", title.hjust = 0.5,
-                             barwidth = unit(4, "cm"), barheight = unit(0.3, "cm"))
+                             barwidth = unit(5, "cm"),
+                             barheight = unit(0.3, "cm"))
     ) +
     layer_admin1(states) +
     layer_country(sudan) +
-    coord_sf(xlim = c(21.5, 39), ylim = c(8.5, 22.5)) +
+    coord_sf(xlim = XLIM, ylim = YLIM) +
     labs(title = label) +
     theme_map()
 }
 
-p_a <- make_suit_panel(pred_ltm, "(a) Long-term mean") +
-  theme(legend.position = "bottom",
-        legend.justification = "center")
-
+p_a <- make_suit_panel(pred_ltm,       "(a) Long-term mean (2000\u20132024)")
 p_b <- make_suit_panel(pred_2025_full, "(b) 2025 annual") +
-  add_scalebar() +
-  theme(legend.position = "none")
+  add_scalebar(location = "br")
+
+maps_row <- (p_a | p_b) +
+  plot_layout(guides = "collect") &
+  theme(legend.position    = "bottom",
+        legend.direction   = "horizontal",
+        legend.box.spacing = unit(4, "pt"),
+        legend.margin      = margin(0, 0, 0, 0),
+        plot.title         = element_text(size = 9, hjust = 0,
+                                          margin = margin(b = 2)))
 
 p_c <- ggplot(hist_df, aes(x = lst, fill = surface)) +
-  geom_density(alpha = 0.4) +
-  geom_vline(xintercept = c(18, 25), linetype = "dashed", colour = "grey40") +
   annotate("rect", xmin = 18, xmax = 25, ymin = -Inf, ymax = Inf,
-           alpha = 0.08, fill = "red") +
-  scale_fill_manual(values = c("Long-term mean" = "steelblue",
-                               "2025" = "firebrick")) +
+           alpha = 0.08, fill = "#B2182B") +
+  geom_density(alpha = 0.4, linewidth = 0.3) +
+  geom_vline(xintercept = c(18, 25), linetype = "dashed",
+             colour = "grey40", linewidth = 0.3) +
+  scale_fill_manual(values = c("Long-term mean" = col_p10,
+                               "2025"           = col_maxsss)) +
+  scale_x_continuous(expand = expansion(mult = c(0.01, 0.01))) +
   labs(x = "LST night (\u00b0C)", y = "Density", fill = NULL,
-       title = "(c) Nighttime LST shift") +
+       title = "(c) Nighttime LST distribution, long-term mean vs 2025") +
   theme_dissertation() +
-  theme(legend.position = "bottom")
+  theme(legend.position      = c(0.02, 0.98),
+        legend.justification = c(0, 1),
+        legend.background    = element_rect(fill = alpha("white", 0.8),
+                                            colour = NA),
+        plot.title           = element_text(size = 9, hjust = 0,
+                                            margin = margin(b = 2))) +
+  theme(axis.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.ticks.y = element_blank())
 
-p_2025_panel <- p_a + p_b + p_c + plot_layout(ncol = 3)
+# ---- Assembly -------------------------------------------------------------
+FIG_W        <- FIG_WIDTH_FULL
+panel_aspect <- diff(YLIM) / (diff(XLIM) * cos(mean(YLIM) * pi / 180))
+map_panel_w  <- (FIG_WIDTH_FULL - 0.6) / 2          # ~7.7 cm
+map_row_h    <- map_panel_w * panel_aspect + 1.8    # panel + title + colourbar
+c_row_h      <- 6.2                                # <- the knob for (c)
+FIG_H        <- map_row_h + c_row_h
 
+p_2025_panel <- maps_row / p_c +
+  plot_layout(heights = c(map_row_h, c_row_h))
 
-ggsave(file.path(DIR_FIGS, "fig_2025_projection_panel.png"), p_2025_panel,
-       width = FIG_WIDTH_FULL, height = FIG_HEIGHT_MAP, dpi = FIG_DPI, bg = "white")
-cat("Saved fig_2025_projection_panel.png\n")
+out <- file.path(DIR_FIGS, "fig_2025_projection_panel.png")
+ggsave(out, p_2025_panel,
+        width  = FIG_W, height = FIG_H, units = "cm",
+        dpi = FIG_DPI, bg = "white")

@@ -338,7 +338,7 @@ p_maps <- p_mx + p_rf + p_gbt +
         legend.text = element_text(size = 7))
 
 ggsave(file.path(DIR_FIGS, "suitability_three_models.png"), p_maps,
-       width = FIG_WIDTH_FULL, height = FIG_HEIGHT_MAP, dpi = 300, bg = "white")
+       width = FIG_WIDTH_FULL, height = FIG_WIDTH_HALF, dpi = FIG_DPI, bg = "white")
 cat("Saved suitability_three_models.png\n")
 
 # -------------------- Partial dependence plots ------------------------------
