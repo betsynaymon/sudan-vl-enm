@@ -1,10 +1,7 @@
 # ============================================================================
 # 18_2025_surface.R
 # Projects the fitted MaxEnt model onto 2025 single-year covariates to test
-# how much interannual climate variation inflates the ARP estimate. The
-# comparison against the long-term mean surface diagnoses whether the LST
-# night step-function amplifies modest temperature shifts into large ARP
-# swings — empirical evidence for the LTM choice.
+# how much interannual climate variation inflates the ARP estimate. 
 #
 # Inputs:  outputs/models/maxent_final.rds
 #          outputs/models/selected_tuning.rds
@@ -23,9 +20,12 @@
 #          outputs/tables/arp_state_comparison_2025.csv
 #          outputs/figures/suitability_2025_vs_ltm.png
 #          outputs/figures/lst_night_shift_diagnostic.png
+#          outputs/figures/fig_2025_projection_panel.png
 # ============================================================================
 
 source(here::here("R", "params.R"))
+source(here::here("R", "plotting_theme.R"))
+
 
 suppressPackageStartupMessages({
   library(terra)
@@ -270,11 +270,7 @@ ggsave(file.path(DIR_FIGS, "lst_night_shift_diagnostic.png"), p_lst,
        width = 8, height = 5, dpi = 300, bg = "white")
 cat("Saved lst_night_shift_diagnostic.png\n")
 
-cat("\n18_2025_surface.R complete\n")
-
-# ====================== COMBINED PANEL FIGURE ================================
-
-source(here::here("R", "plotting_theme.R"))
+# ------------ COMBINED PANEL FIGURE ------------
 
 states <- st_as_sf(gadm(country = "SDN", level = 1,
                         path = here::here("data", "raw")))
@@ -334,7 +330,7 @@ p_c <- ggplot(hist_df, aes(x = lst, fill = surface)) +
         axis.title.y = element_blank(),
         axis.ticks.y = element_blank())
 
-# ---- Assembly -------------------------------------------------------------
+# ------------ Assembly --------------
 FIG_W        <- FIG_WIDTH_FULL
 panel_aspect <- diff(YLIM) / (diff(XLIM) * cos(mean(YLIM) * pi / 180))
 map_panel_w  <- (FIG_WIDTH_FULL - 0.6) / 2          # ~7.7 cm
@@ -349,3 +345,6 @@ out <- file.path(DIR_FIGS, "fig_2025_projection_panel.png")
 ggsave(out, p_2025_panel,
         width  = FIG_W, height = FIG_H, units = "cm",
         dpi = FIG_DPI, bg = "white")
+
+
+cat("\n18_2025_surface.R complete\n")

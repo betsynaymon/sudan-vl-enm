@@ -18,9 +18,12 @@
 #          outputs/models/cv_fold_predictions.rds  (cached)
 #          outputs/tables/arp_fold_uncertainty.csv
 #          outputs/figures/prediction_uncertainty_sd.png
+#          outputs/figures/fig_prediction_uncertainty_sd.png
 # ============================================================================
 
 source(here::here("R", "params.R"))
+source(here::here("R", "plotting_theme.R"))
+
 
 suppressPackageStartupMessages({
   library(terra)
@@ -249,11 +252,8 @@ fold_arps_out <- rbind(
 write.csv(fold_arps_out, file.path(DIR_TABLES, "arp_fold_uncertainty.csv"),
           row.names = FALSE)
 
-cat("\n14_uncertainty_surface.R complete\n")
 
-# -------------------- DISSERTATION FIGURE ---------------------------
-source(here::here("R", "plotting_theme.R"))
-
+# ============== DISSERTATION FIGURE ==============
 adm0   <- gadm(country = "SDN", level = 0, path = here::here("data", "raw"))
 adm1   <- gadm(country = "SDN", level = 1, path = here::here("data", "raw"))
 sudan  <- st_as_sf(adm0)
@@ -286,3 +286,5 @@ p_sd <- ggplot() +
 ggsave(file.path(DIR_FIGS, "prediction_uncertainty_sd.png"), p_sd,
        width = 16, height = 14, units = "cm", dpi = 300, bg = "white")
 cat("Saved fig_prediction_uncertainty_sd.png\n")
+
+cat("\n14_uncertainty_surface.R complete\n")

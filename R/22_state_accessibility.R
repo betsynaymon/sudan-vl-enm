@@ -29,7 +29,7 @@ TT_THRESHOLD <- 324  # minutes
 # Travel-time surface (Weiss et al. 2018)
 tt <- rast(here::here("data", "raw", "weiss_travel_time.tif"))
 
-# Population raster — UPDATE PATH to match your processed 1km file
+# Population raster 
 pop <- rast(here::here("data", "raw", "population", "sdn_pop_2025_100m_constrained.tif"))
 
 # Suitability surface as alignment template

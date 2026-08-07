@@ -22,8 +22,8 @@ suppressPackageStartupMessages({
 })
 
 # ----------------------------- Load and filter ------------------------------
-# Drop Khartoum/Omdurman referral records--these are treatment locations, not
-# transmission sites. ID 121 (vector-positive trap site) is retained: direct evidence of
+# Drop Khartoum/Omdurman referral records--no evidence of local transmission. 
+# ID 121 (vector-positive trap site) is retained: direct evidence of
 # local vector occurrence.
 
 occ <- read.csv(here::here("data", "raw", "compiled_vl_presences.csv"))
@@ -41,7 +41,7 @@ stopifnot(
 # ---------------------- Nearest-neighbor diagnostic ------------------------
 # Clustering diagnosed on unique locations (collapsing year-duplicates) since
 # the concern is spatial autocorrelation in geographic space. Projected to
-# UTM 36N for distances in metres.
+# UTM 36N for distances in meters.
 
 occ_unique <- occ_fit %>% distinct(longitude, latitude, .keep_all = TRUE)
 cat("Unique fitting locations:", nrow(occ_unique), "\n")

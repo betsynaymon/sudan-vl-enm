@@ -55,8 +55,7 @@ K_FOLDS <- 4
 ENM_FC <- c("L", "LQ", "LQH", "LQHP")   # H-only removed: predict.maxnet fails on binary covariates
 ENM_RM <- seq(0.5, 4, by = 0.5)           # regularization multipliers
 # Model selection: best CBI across the feature class × regularization grid.
-# Omission rate (0.20–0.35) does not discriminate under spatial CV with
-# clustered presences, so it is not used as a filter. See 06_maxent_tuning.R.
+# See 06_maxent_tuning.R.
 # SELECTED_FC / SELECTED_RM saved to selected_tuning.rds after grid search.
 
 # ----- Evaluation Metrics -----

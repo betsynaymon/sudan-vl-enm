@@ -1,8 +1,6 @@
 # ============================================================================
 # plotting_theme.R
 # Centralized styling for dissertation figures
-# Source this at the top of every figure script:
-#   source("plotting_theme.R")
 # ============================================================================
 
 library(ggplot2)
@@ -19,7 +17,6 @@ FIG_HEIGHT_MAP   <- 14      # cm, portrait map
 FIG_HEIGHT_PLOT  <- 10      # cm, standard non-map figure
 FIG_DPI          <- 300     # print quality
 
-# Wrapper: enforces consistent dimensions and device settings.
 # Usage: save_fig("figures/suitability_map.png", p, width = FIG_WIDTH_FULL, height = FIG_HEIGHT_MAP)
 save_fig <- function(filename, plot = last_plot(),
                      width = FIG_WIDTH_FULL,
@@ -59,7 +56,7 @@ CAPTION_SIZE <- 8           # source notes, figure captions
 pal_suitability <- c(
     "#2166AC",   # deep blue  (0.00)
     "#67A9CF",   # mid blue   (0.25)
-    "#F7F7F7",   # near-white (0.50) — keeps the "low = cool" reading
+    "#F7F7F7",   # near-white (0.50) 
     "#EF8A62",   # salmon     (0.75)
     "#B2182B"    # deep red   (1.00)
 )
@@ -93,7 +90,7 @@ pal_mess_binary <- c(
 )
 
 # — Model comparison (PDP, robustness) —
-# Named so you can use scale_colour_manual(values = pal_models)
+# Example: scale_colour_manual(values = pal_models)
 pal_models <- c(
     "MaxEnt" = "#4575B4",    # steel blue
     "RF"     = "#A50026",    # dark red
@@ -177,7 +174,6 @@ theme_dissertation <- function(base_size = BASE_SIZE,
 
 # ----------------------------------------------------------------------------
 # 5. MAP THEME
-#    Strips lat/lon axes and graticule. Keeps legend and essentials.
 #    Use with ggspatial::annotation_scale() and annotation_north_arrow().
 # ----------------------------------------------------------------------------
 

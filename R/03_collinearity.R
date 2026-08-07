@@ -108,7 +108,7 @@ for (set_name in names(candidate_sets)) {
   print(usdm::vif(sample_vals[, candidate_sets[[set_name]]]))
 }
 
-# ---------------------- Finalise variable set -------------------------------
+# ---------------------- Finalize variable set -------------------------------
 # Set A selected on ecological grounds:
 #   slope       topographic steepness; independent of elevation (r = 0.56)
 #   river_dist  distance to drainage incl. seasonal khors; independent (|r| <= 0.21)

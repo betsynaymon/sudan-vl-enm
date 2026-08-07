@@ -1,0 +1,52 @@
+{
+  "mueller_et_al_2012_fig2": {
+    "image": "mueller_et_al_2012_fig2.png",
+    "ref_points": [
+      {"name": "Tabarak Allah", "lat": 13.6238, "lon": 36.0919},
+      {"name": "Northern ref",  "lat": 14.055,  "lon": 36.026}
+    ],
+    "source": "Mueller et al. 2012",
+    "year": 2011,
+    "notes": "45 villages in Gedaref"
+  },
+  "gerstl_et_al_2006_fig1": {
+    "image": "gerstl_et_al_2006_fig1.png",
+    "ref_points": [
+      {"name": "Kassab",   "lat": 13.83442, "lon": 35.43355},
+      {"name": "Basunda",  "lat": 12.97095, "lon": 35.83403}
+    ],
+    "source": "Gerstl et al. 2006",
+    "year": 2006,
+    "notes": ""
+  },
+  "vandebogaart_et_al_2013_fig1": {
+    "image": "vandeBogaart_et_al_2013_fig1.png",
+    "ref_points": [
+      {"name": "Kassab",   "lat": 13.83442, "lon": 35.43355},
+      {"name": "Basunda",  "lat": 12.97095, "lon": 35.83403}
+    ],
+    "source": "van de Bogaart et al. 2013",
+    "year": 2013,
+    "notes": ""
+  },
+  "elnaiem_et_al_2003_fig1": {
+    "image": "elnaiem_et_al_2003_fig1.png",
+    "ref_points": [
+      {"name": "Gedaref",        "lat": 14.034722, "lon": 35.383333},
+      {"name": "Afrosh-Tobak",   "lat": 12.809167, "lon": 35.224167}
+    ],
+    "source": "Elnaiem et al. 2003",
+    "year": 2003,
+    "notes": "190 study villages"
+  },
+  "hassan_et_al_2020_fig1": {
+    "image": "Hassan_et_al_2020_fig1.png",
+    "ref_points": [
+      {"name": "Khartoum",  "lat": 15.61375,  "lon": 32.55879},
+      {"name": "Doka",      "lat": 13.516667, "lon": 35.766667}
+    ],
+    "source": "Hassan et al. 2020",
+    "year": 2020,
+    "notes": ""
+  }
+}

@@ -1,6 +1,6 @@
 # ============================================================================
 # 06_maxent_tuning.R
-# Tunes MaxEnt hyperparameters (feature classes × regularisation multipliers)
+# Tunes MaxEnt hyperparameters (feature classes × regularization multipliers)
 # via manual grid search with spatial block CV, using year-matched covariate
 # extraction. Fits the final model on all data and saves it for prediction.
 #
@@ -246,19 +246,16 @@ res <- bind_rows(results)
 cat("\nModels evaluated:", nrow(res), "\n")
 
 # ----------------------------- Select model ---------------------------------
-# LQH CBI is flat across regularisation (0.80–0.89 over 0.5–4.0 rm), so
+# LQH CBI is flat across regularization (0.80–0.89 over 0.5–4.0 rm), so
 # configurations are not meaningfully distinguishable on CV performance alone.
 # Selection among equivalent-performing configurations uses response curve
 # plausibility as a secondary criterion:
 #   - rm=1.5 produces a sharp LST night thermal threshold and humped rainfall
-#     response consistent with P. orientalis biology, both of which appear
-#     independently in RF and GBT comparators.
+#     response consistent with P. orientalis biology 
 #   - Higher rm (e.g. 2.0) penalises the hinge features that capture these
-#     ecological shapes and compensates by shifting weight to river distance —
-#     the one covariate all three algorithms disagree on and the accessibility
-#     diagnostic flagged as a geographic proxy.
+#     ecological shapes and compensates by shifting weight to river distance 
 # Selecting rm=1.5 from within the range of equivalent CBI configurations
-# prioritises ecological interpretability over a small, non-significant CBI
+# prioritizes ecological interpretability over a small, non-significant CBI
 # difference.
 
 best <- res |>

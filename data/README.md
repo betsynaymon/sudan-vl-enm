@@ -13,6 +13,26 @@ This directory contains all input data for the analysis pipeline. Most files are
 
 All environmental covariates were extracted via Google Earth Engine (GEE) and exported to Google Drive. The Python notebooks in `python/` document the exact GEE collections, compositing logic, scale factors, and export parameters for every raster. All layers are exported at 1 km resolution in EPSG:4326, clipped to the study extent (21.5°E–39°E, 8.5°N–22.5°N).
 
+### Covariates used in the final model
+
+Not all layers below are model predictors. The final MaxEnt model uses five —
+**slope**, **distance to rivers**, **vertisols**, **annual nighttime LST**, and
+**annual rainfall** — selected on ecological grounds from two correlated clusters
+during collinearity screening (`R/03_collinearity.R`).
+
+The rest are extracted but not used in the primary model:
+
+- **NDVI, tree cover, elevation, daytime LST** — retained for collinearity
+  screening and as alternative cluster representatives in the variable-sensitivity
+  analysis (`R/15_variable_sensitivity.R`).
+- **Seasonal (wet/dry) composites** — used only by that sensitivity analysis; the
+  wet- and dry-season nighttime LST layers are the seasonal temperature
+  representatives it swaps in. 
+- **Travel time** — used for the sampling-bias diagnostics and accessibility-weighted
+  null (scripts 11–13), not as a covariate.
+- **Population and administrative boundaries** — used downstream of the model, not
+  as predictors.
+
 ### GEE Export Configuration
 
 Dynamic covariates are extracted as annual composites for each occurrence year (2000–2016 annually, then 2018, 2020, 2022, 2024), plus a long-term mean (2000–2024) for the prediction surface. Seasonal composites use wet season (June–October) and dry season (November–May) windows where applicable.
@@ -71,7 +91,7 @@ raw/lst_{day|night}_{annual|dry|wet}_mean_2000_2024_1km.tif
 raw/lst_night_annual_2025_1km.tif
 ```
 
-**Normalised Difference Vegetation Index (MODIS MOD13Q1)**
+**Normalized Difference Vegetation Index (MODIS MOD13Q1)**
 
 Source: MODIS Terra NDVI 16-day composite, 250 m native resolution. Scale factor 0.0001. Annual, wet season, and dry season composites. Resampled from 250 m to 1 km via mean reducer.
 

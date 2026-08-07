@@ -2,9 +2,7 @@
 # 12_sampling_bias_robustness.R
 # Resamples background proportional to accessibility (Weiss et al. 2018
 # travel-time surface), refits MaxEnt, and compares to the uniform-background
-# model. Tests both sqrt and log bias transforms for robustness. The 13M-to-
-# 17.7M divergence quantifies the population rendered invisible by geographic
-# bias in occurrence records.
+# model. Tests both sqrt and log bias transforms for robustness. 
 #
 # Inputs:  outputs/models/training_data.rds
 #          outputs/models/spatial_cv_folds.rds
@@ -281,9 +279,9 @@ pct_shift <- round(100 * (biased_arp_weighted - orig_arp_weighted) / orig_arp_we
 cat("Risk-weighted shift (masked):", pct_shift, "%\n")
 
 # Unmasked ARP — full prediction surface across Sudan
-# This produces the 13M-to-17.7M bracket: the original model predicts across
-# the full covariate extent (effectively self-masking since desert gets ~0),
-# while the bias-corrected model assigns suitability to Nile-corridor areas
+# The original model predicts across the full covariate extent 
+# (effectively self-masking since desert gets ~0), while the 
+# bias-corrected model assigns suitability to Nile-corridor areas
 # that share fragments of the Gedaref environmental profile.
 orig_arp_unmasked   <- global(pop_aligned * suit_mx, "sum", na.rm = TRUE)[[1]]
 biased_arp_unmasked <- global(pop_aligned * suit_biased, "sum", na.rm = TRUE)[[1]]
@@ -519,6 +517,8 @@ cat("12_sampling_bias_robustness.R complete\n")
 # ================== DISSERTATION FIGURE =======================================
 # Side-by-side: original vs accessibility-corrected suitability surface.
 # Objects needed: suit_mx, suit_biased, sudan (all from earlier in script)
+# Outputs: outputs/figures/fig_bias_comparison.pdf
+#          outputs/figures/fig_bias_comparison.png
 # =============================================================================
 
 library(patchwork)
@@ -538,7 +538,7 @@ biased_df <- as.data.frame(biased_masked, xy = TRUE)
 names(biased_df) <- c("x", "y", "suitability")
 biased_df <- biased_df[!is.na(biased_df$suitability), ]
 
-# Shared extent (cropped east to drop Red Sea island specks)
+# Shared extent (cropped east to drop Red Sea islands)
 map_xlim <- c(21.5, 38.5)
 map_ylim <- c(8, 24.5)
 

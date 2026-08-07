@@ -270,7 +270,7 @@ stopifnot(length(bg_grp)   == nrow(bg_clean))
 stopifnot(nrow(bg_env)     == nrow(bg_clean))
 
 # ========================== 6. SPATIAL CV ====================================
-# Fixed at LQH rm = 1.5 — this is a sensitivity check, not a re-tuning
+# Fixed at LQH rm = 1.5 — this is a sensitivity check
 
 pa      <- c(rep(1, nrow(occ_clean)), rep(0, nrow(bg_clean)))
 env_all <- rbind(occ_env, bg_env)

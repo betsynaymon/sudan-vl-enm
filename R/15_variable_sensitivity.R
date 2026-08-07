@@ -4,7 +4,7 @@
 # seasonal A_dry/A_wet) to test how sensitive the suitability surface and ARP
 # are to covariate selection. All variants share the same occurrence points,
 # background points, and spatial CV fold structure. Set A (annual) is the
-# primary model; its results are loaded for comparison, not rerun.
+# primary model; its results are loaded for comparison.
 #
 # Inputs:  data/processed/occurrences_thinned.csv
 #          data/processed/background_points.csv

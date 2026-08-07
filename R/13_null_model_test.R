@@ -17,6 +17,7 @@
 # Outputs: outputs/models/null_model_results.rds
 #          outputs/figures/null_model_test.png
 #          outputs/figures/null_model_test_accessible.png
+#.         outputs/figures/fig_null_model_panel.png
 # ============================================================================
 
 source(here::here("R", "params.R"))
@@ -28,6 +29,7 @@ suppressPackageStartupMessages({
   library(maxnet)
   library(ggplot2)
   library(ecospat)
+  library(patchwork)
 })
 
 # ------------------------------ Load inputs ---------------------------------
@@ -282,11 +284,8 @@ ggsave(file.path(DIR_FIGS, "null_model_test_accessible.png"), p_null_acc,
        width = 7, height = 5, dpi = 300, bg = "white")
 cat("Saved null_model_test_accessible.png\n")
 
-cat("\n13_null_model_test.R complete\n")
 
-# ========================= PANEL FIGURE =====================================
-
-library(patchwork)
+# ---------------- PANEL FIGURE -------------
 
 # Shared x-axis so both distributions are visually comparable
 x_limits <- c(-1, 1.05)
@@ -319,3 +318,5 @@ ggsave(file.path(DIR_FIGS, "fig_null_model_panel.png"), p_null_panel,
          width = FIG_WIDTH_FULL, height = 8)
 
 cat("Saved fig_null_model_panel.png\n")
+
+cat("\n13_null_model_test.R complete\n")

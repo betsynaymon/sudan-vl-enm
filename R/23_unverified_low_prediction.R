@@ -5,25 +5,12 @@
 # where geographic accessibility is so poor that this low prediction has not
 # been -- and cannot easily be -- checked against ground observation.
 #
-# The claim is EPISTEMIC, not ecological. It does NOT assert these areas are
-# actually suitable or at risk (the east-west diagnostic and MESS show the
-# model assessed the western profile as unsuitable *within* its interpolation
-# range). It says: for these people, the observation system that would confirm
-# or refute the model's low call does not reach them, so the risk question
-# cannot currently be answered from available evidence. This is the geographic
-# footprint of statistical invisibility.
-#
 # Definition (per cell, within the >=150 mm ecological domain):
 #   below-threshold : suitability <  {p10, maxSSS}    (classified not-at-risk)
 #   unreachable     : travel time  >  cutoff          (beyond observation reach)
 #   invisible pop   : WorldPop 2025 summed where both hold
 #
-# Extent = ecological mask (>=150 mm). This keeps the claim about REACHABILITY,
-# not extrapolation: the mask already excludes the Saharan north, where the
-# model's low predictions rely most on extrapolation (per the MESS analysis).
-# A full-Sudan figure is printed alongside for transparency but is NOT the
-# headline -- it pads the count with desert where the "at risk?" question is
-# not genuinely open.
+# Extent = ecological mask (>=150 mm). 
 #
 # "Unreachable" is anchored to the evidence base: the travel-time distribution
 # at the 98 occurrence records defines how far observation actually reached.
@@ -161,7 +148,6 @@ cat("\nConservative floor (below-p10, tt > occ 95th pct):",
     format(round(floor_val), big.mark = ","), "\n")
 
 # ------------- Transparency: full-Sudan (unmasked), primary cutoff ----------
-# Reported for completeness only. NOT the headline (see header note).
 
 primary_cut <- cutoffs[["occ_90th"]]
 remote_full <- tt_aligned > primary_cut

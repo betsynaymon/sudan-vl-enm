@@ -3,8 +3,7 @@
 # Extracts predicted suitability at each thinned presence location, classifies
 # east (non-Darfur) vs west (Darfur), and compares distributions. Tests
 # whether the western gap persists across all covariate variants and after
-# accessibility correction. Frames the result as a justified scope boundary
-# rather than a model failure.
+# accessibility correction. 
 #
 # Inputs:  outputs/models/maxent_final.rds
 #          outputs/models/training_data.rds
@@ -14,9 +13,13 @@
 #          data/processed/occurrences_thinned.csv
 # Outputs: outputs/tables/east_west_diagnostic.csv
 #          outputs/figures/east_west_suitability_diagnostic.png
+#          outputs/figures/fig_east_west.png
+#          outputs/figures/fig_east_west.pdf
 # ============================================================================
 
 source(here::here("R", "params.R"))
+source(here::here("R", "plotting_theme.R"))
+
 
 suppressPackageStartupMessages({
   library(terra)
@@ -97,7 +100,7 @@ region_summary <- occ_states |>
   )
 print(region_summary)
 
-# ---------------------- Strip plot ------------------------------------------
+# ---------------------- Strip plot ---------------------------
 
 plot_df <- occ_states |>
   st_drop_geometry() |>
@@ -126,7 +129,7 @@ ggsave(file.path(DIR_FIGS, "east_west_suitability_diagnostic.png"), p_ew,
        width = 7, height = 6, dpi = 300, bg = "white")
 cat("Saved east_west_suitability_diagnostic.png\n")
 
-# ------------------- Cross-variant sensitivity ------------------------------
+# ------------------- Cross-variant sensitivity ---------------------------
 
 variant_surfaces <- list(
   A_annual = rast(file.path(DIR_SURFACES, "maxent_suitability.tif")),
@@ -183,13 +186,11 @@ cat("\n--- East-west diagnostic summary ---\n")
 cat("Eastern presences (n=", n_east, "): median suitability", east_med, "\n")
 cat("Western presences (n=", n_west, "): median suitability", west_med, "\n")
 
-cat("\n20_east_west_diagnostic.R complete\n")
 
 # ================== DISSERTATION FIGURE =======================================
 # Objects needed: plot_df, region_summary, east_med, west_med,
 #                 n_east, n_west, p10, maxsss
 # =============================================================================
-source(here::here("R", "plotting_theme.R"))
 
 p_ew_diss <- ggplot(plot_df, aes(x = region, y = suitability, colour = region)) +
   geom_point(position = position_jitter(width = 0.15, seed = 42),
@@ -217,3 +218,5 @@ save_fig(file.path(DIR_FIGS, "fig_east_west.png"), p_ew_diss,
 save_fig(file.path(DIR_FIGS, "fig_east_west.pdf"), p_ew_diss,
          width = FIG_WIDTH_HALF * 1.5, height = FIG_HEIGHT_PLOT)
 cat("Saved fig_east_west\n")
+
+cat("\n20_east_west_diagnostic.R complete\n")

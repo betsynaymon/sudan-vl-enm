@@ -375,7 +375,7 @@ states <- st_as_sf(adm1)
 # ---- Occurrences as sf (for geom_sf consistency) ----
 occ_sf <- st_as_sf(occ, coords = c("longitude", "latitude"), crs = 4326)
  
-# ---- Clip MESS to Sudan boundary (cached raster may extend beyond) ----
+# ---- Clip MESS to Sudan boundary  ----
 mess_r_clipped <- mask(mess_r, vect(sudan))
 mess_df_clipped <- as.data.frame(mess_r_clipped, xy = TRUE)
 names(mess_df_clipped) <- c("x", "y", "mess")
@@ -461,7 +461,6 @@ cat("Saved fig_suitability_mess\n")
  
  
 # ---------- Standalone suitability (full width) ------------------------------
-# Legend stays inside the map here -- plenty of room at full width.
  
 p_suit_full <- ggplot() +
   geom_sf(data = sudan, fill = "grey95", colour = NA) +
@@ -484,10 +483,10 @@ cat("Saved fig_suitability (standalone)\n")
 
 # ---------- Response curves + variable importance (2x3 grid) -----------------
 # Five response curves fill positions 1-5; variable importance fills the 6th
-# slot (bottom-right). Each variable gets a unique colour shared across both.
+# slot (bottom-right).
 # Objects needed: response_data, perm_df, var_labels (from earlier in script)
 
-# Covariate colour palette (Okabe-Ito derived, colourblind-safe)
+# Covariate color palette 
 pal_covariates <- c(
   "Slope (degrees)"          = "#CC79A7",
   "Distance to river (m)"    = "#009E73",
@@ -517,14 +516,14 @@ make_response <- function(var, show_ylab = FALSE) {
           axis.text = element_text(size = 7))
 }
 
-# Build the five response panels (y-axis label on leftmost only)
+# Build the five response panels 
 p1 <- make_response("slope",      show_ylab = TRUE)
 p2 <- make_response("river_dist")
 p3 <- make_response("vertisols")
 p4 <- make_response("lst_night",  show_ylab = TRUE)
 p5 <- make_response("rainfall")
 
-# Variable importance (6th slot, bottom-right)
+# Variable importance 
 p_imp_grid <- perm_df |>
   mutate(var_label = factor(var_label, levels = rev(perm_df$var_label))) |>
   ggplot(aes(x = mean, y = var_label, colour = var_label)) +
@@ -541,7 +540,7 @@ p_imp_grid <- perm_df |>
         axis.text.x = element_text(size = 5),
         axis.title.x = element_text(size = 7))
 
-# 2x3 grid, no legend needed (importance y-axis labels carry the mapping)
+# 2x3 grid
 fig_resp_imp <- (p1 + p2 + p3) / (p4 + p5 + p_imp_grid) &
   theme(legend.position = "none")
 
