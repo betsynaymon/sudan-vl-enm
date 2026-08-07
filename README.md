@@ -2,7 +2,7 @@
 
 Ecological niche model estimating populations at risk of visceral leishmaniasis (VL) in Sudan at 1 km resolution, using publicly available environmental covariates under conditions of data scarcity. MaxEnt primary model with random forest and gradient boosted tree comparators and a set of robustness and sensitivity tests.
 
-This repository contains the analysis pipeline for an MSc dissertation submitted to the London School of Economics and Political Science, Department of Methodology (Applied Social Data Science), August 2025.
+This repository contains the analysis pipeline for an MSc dissertation submitted to the London School of Economics and Political Science, Department of Methodology (Applied Social Data Science), August 2026.
 
 ## Repository Structure
 
@@ -120,4 +120,4 @@ The license covers the code in this repository only. Environmental covariate dat
 
 ## Citation
 
-Naymon, B. (2025). Estimating populations at risk of visceral leishmaniasis in Sudan: An ecological niche modelling approach under data scarcity. MSc dissertation, London School of Economics and Political Science.
+Naymon, B. (2026). Geographies of Neglect: Bridging Evidence Gaps to Map Visceral Leishmaniasis in Sudan. MSc dissertation, London School of Economics and Political Science.
