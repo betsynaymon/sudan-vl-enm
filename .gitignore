@@ -58,3 +58,5 @@ data/processed/*
 R/21_ecological_mask_check.R
 R/fig_study_area.R
 
+# --- post-dissertation exploratory analyses ---
+R/24_*.R
