@@ -259,9 +259,9 @@ p_suit <- ggplot() +
   annotation_scale(location = "bl", width_hint = 0.2) +
   annotation_north_arrow(location = "tr", which_north = "true",
                          style = north_arrow_minimal()) +
-  labs(title = paste0("VL habitat suitability \u2014 MaxEnt (",
-                      sel$fc, ", rm = ", sel$rm, ")"),
-       subtitle = "Continuous prediction across Sudan") +
+  #labs(title = paste0("VL habitat suitability \u2014 MaxEnt (",
+  #                   sel$fc, ", rm = ", sel$rm, ")"),
+  #     subtitle = "Continuous prediction across Sudan") +
   coord_sf(xlim = c(21.5, 39), ylim = c(8.5, 23), crs = 4326) +
   theme_minimal() +
   theme(panel.grid = element_blank(),
