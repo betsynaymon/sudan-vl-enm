@@ -23,6 +23,8 @@
 #          outputs/figures/maxent_suitability_map.png
 #          outputs/figures/suitability_darfur_zoom.png
 #          outputs/figures/mess_extrapolation.png
+#          outputs/tables/response_curve_features.csv
+#          outputs/tables/covariate_spread.csv
 # ============================================================================
 
 source(here::here("R", "params.R"))
@@ -124,6 +126,46 @@ ggsave(file.path(DIR_FIGS, "response_curves.png"), p_resp,
        width = 10, height = 6, dpi = 300)
 cat("Saved response_curves.png\n")
 
+# -------------- Response-curve features ----------
+# The text quotes positions read off these marginal curves: the LST-night
+# threshold, rainfall peak and decline, slope peak. Other covariates are held
+# at the background median, so x-positions are more robust than heights.
+#   rise_XX = lowest value where suitability reaches XX% of the curve's peak
+#   fall_XX = highest value where suitability is still at XX% of the peak
+
+curve_features <- function(d) {
+  mx <- max(d$suit)
+  x_at <- function(frac, side) {
+    above <- d$value[d$suit >= frac * mx]
+    if (side == "rise") min(above) else max(above)
+  }
+  tibble(
+    variable  = unique(d$variable),
+    peak_x    = d$value[which.max(d$suit)],
+    peak_suit = mx,
+    min_suit  = min(d$suit),
+    rise_10 = x_at(0.10, "rise"), rise_50 = x_at(0.50, "rise"),
+    rise_90 = x_at(0.90, "rise"),
+    fall_90 = x_at(0.90, "fall"), fall_50 = x_at(0.50, "fall"),
+    fall_10 = x_at(0.10, "fall")
+  )
+}
+
+resp_cont <- response_data |> filter(variable != "vertisols")
+resp_features <- bind_rows(lapply(split(resp_cont, resp_cont$variable),
+                                  curve_features))
+vert <- response_data |> filter(variable == "vertisols")
+
+cat("\nResponse-curve features:\n")
+resp_features |>
+  mutate(across(where(is.numeric), ~ signif(., 3))) |>
+  print(width = Inf)
+cat("Vertisols: suitability", round(vert$suit[vert$value == 0], 3),
+    "(absent) vs", round(vert$suit[vert$value == 1], 3), "(present)\n")
+
+write.csv(resp_features, file.path(DIR_TABLES, "response_curve_features.csv"),
+          row.names = FALSE)
+
 # ======================= ENVIRONMENTAL SPREAD ===============================
 
 occ_spread <- occ_env |> mutate(type = "Presence")
@@ -150,6 +192,36 @@ p_spread <- ggplot(env_both |> filter(variable != "vertisols"),
 ggsave(file.path(DIR_FIGS, "env_spread_density.png"), p_spread,
        width = 10, height = 6, dpi = 300)
 cat("Saved env_spread_density.png\n")
+
+# --------------- Covariate spread ----------------
+# Values at training presences vs background (year-matched extractions).
+
+spread_q <- env_both |>
+  filter(variable != "vertisols") |>
+  group_by(variable, type) |>
+  summarise(
+    n = n(), min = min(value),
+    q05 = quantile(value, 0.05), q25 = quantile(value, 0.25),
+    median = median(value),
+    q75 = quantile(value, 0.75), q95 = quantile(value, 0.95),
+    max = max(value), .groups = "drop"
+  ) |>
+  arrange(variable, desc(type))
+
+cat("\nCovariate spread, presences vs background:\n")
+spread_q |>
+  mutate(across(min:max, ~ signif(., 4))) |>
+  print(n = Inf, width = Inf)
+
+vert_share <- env_both |>
+  filter(variable == "vertisols") |>
+  group_by(type) |>
+  summarise(pct_on_vertisols = round(100 * mean(value == 1), 1))
+cat("\nShare of points on vertisols (%):\n")
+print(vert_share)
+
+write.csv(spread_q, file.path(DIR_TABLES, "covariate_spread.csv"),
+          row.names = FALSE)
 
 # ====================== PERMUTATION IMPORTANCE ==============================
 
