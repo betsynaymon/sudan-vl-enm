@@ -14,6 +14,8 @@
 #          data/raw/weiss_travel_time.tif
 #          data/raw/ecological_mask_150mm.tif
 #          data/processed/occurrences_thinned.csv
+#          R/extract_year_matched.R
+
 # Outputs: outputs/models/maxent_biased_background.rds
 #          outputs/models/maxent_log_bias_background.rds
 #          outputs/surfaces/maxent_suitability_biased_bg.tif
@@ -21,9 +23,12 @@
 #          outputs/tables/arp_by_state_bias_comparison.csv
 #          outputs/figures/suitability_biased_bg.png
 #          outputs/figures/response_curves_bias_comparison.png
+#          outputs/tables/bias_correction_by_extent.csv
+#          outputs/tables/arp_by_state_bias_both_extents.csv
 # ============================================================================
 
 source(here::here("R", "params.R"))
+source(here::here("R", "extract_year_matched.R"))
 
 suppressPackageStartupMessages({
   library(terra)
@@ -96,13 +101,16 @@ cat("Biased    \u2014 median:", round(median(tt_biased, na.rm = TRUE)), "min\n")
 cov_stack_mean <- rast(file.path(DIR_COVARIATES, COV_FILES[vars]))
 names(cov_stack_mean) <- vars
 
-bg_biased_pts <- vect(bg_biased_df, geom = c("longitude", "latitude"), crs = "EPSG:4326")
-bg_biased_env <- terra::extract(cov_stack_mean, bg_biased_pts, ID = FALSE)
+bg_biased_env <- extract_year_matched(bg_biased_df, vars, mask_r)
 
 complete <- complete.cases(bg_biased_env)
 bg_biased_env <- bg_biased_env[complete, ]
 bg_biased_df  <- bg_biased_df[complete, ]
 cat("Biased background after NA drop:", nrow(bg_biased_env), "\n")
+
+cat("Rainfall at background — primary vs corrected:\n")
+print(rbind(primary   = summary(train$bg_env$rainfall),
+            corrected = summary(bg_biased_env$rainfall)))
 
 p_mat <- as.matrix(train$occ_env[, vars])
 b_mat <- as.matrix(bg_biased_env[, vars])
@@ -278,11 +286,9 @@ cat(sprintf("%-20s %14s %14s\n", "p10 binary",
 pct_shift <- round(100 * (biased_arp_weighted - orig_arp_weighted) / orig_arp_weighted, 1)
 cat("Risk-weighted shift (masked):", pct_shift, "%\n")
 
-# Unmasked ARP — full prediction surface across Sudan
-# The original model predicts across the full covariate extent 
-# (effectively self-masking since desert gets ~0), while the 
-# bias-corrected model assigns suitability to Nile-corridor areas
-# that share fragments of the Gedaref environmental profile.
+# Unmasked ARP — Full prediction surface. 
+# About 17% of the uniform-background ARP lies 
+# outside the ecological mask (see 08 diagnostics).
 orig_arp_unmasked   <- global(pop_aligned * suit_mx, "sum", na.rm = TRUE)[[1]]
 biased_arp_unmasked <- global(pop_aligned * suit_biased, "sum", na.rm = TRUE)[[1]]
 
@@ -304,7 +310,7 @@ bias_summary <- data.frame(
                   "ARP maxSSS binary", "ARP p10 binary",
                   "p10 threshold", "maxSSS threshold",
                   "Surface correlation (Pearson)", "Bias transform"),
-  original   = c(98, 10000, 13,
+  original   = c(98, 10000, sum(mod$betas != 0),
                   0.857, 0.776,
                   round(global(suit_mx, "mean", na.rm = TRUE)[[1]], 4),
                   round(orig_arp_weighted), round(orig_arp_maxsss),
@@ -340,7 +346,7 @@ bg_log_df <- as.data.frame(bg_log, geom = "XY") |>
 bg_log_df$year <- sample(year_weights$year, size = nrow(bg_log_df),
                          replace = TRUE, prob = year_weights$weight)
 bg_log_pts <- vect(bg_log_df, geom = c("longitude", "latitude"), crs = "EPSG:4326")
-bg_log_env <- terra::extract(cov_stack_mean, bg_log_pts, ID = FALSE)
+bg_log_env <- extract_year_matched(bg_log_df, vars, mask_r)
 
 complete <- complete.cases(bg_log_env)
 bg_log_env <- bg_log_env[complete, ]
@@ -375,6 +381,52 @@ cat("Log  \u2014 bg median:", round(median(tt_log, na.rm = TRUE)), "min, ARP:",
 
 saveRDS(mod_log, file.path(DIR_MODELS, "maxent_log_bias_background.rds"))
 
+# ------------------ Both-extent comparison  -----------------------------
+# Every comparison on both extents: the full prediction surface and within
+# the >= 150 mm ecological mask. 
+
+extents   <- list(full = NULL, masked = mask_r)
+on_extent <- function(r, ext) if (is.null(ext)) r else mask(r, ext)
+rw_sum    <- function(r) global(pop_aligned * r, "sum", na.rm = TRUE)[[1]]
+
+surf_cor <- function(a, b) {
+  va <- values(a)[, 1]
+  vb <- values(b)[, 1]
+  ok <- which(!is.na(va) & !is.na(vb))
+  set.seed(SEED)
+  s  <- sample(ok, min(50000, length(ok)))
+  c(pearson  = cor(va[s], vb[s]),
+    spearman = cor(va[s], vb[s], method = "spearman"))
+}
+
+extent_summary <- bind_rows(lapply(names(extents), function(e) {
+  ext <- extents[[e]]
+  o <- on_extent(suit_mx, ext)
+  b <- on_extent(suit_biased, ext)
+  l <- on_extent(suit_log, ext)
+  arp_o <- rw_sum(o); arp_b <- rw_sum(b); arp_l <- rw_sum(l)
+  cr <- surf_cor(o, b)
+  data.frame(
+    extent          = e,
+    arp_uniform     = arp_o,
+    arp_sqrt        = arp_b,
+    arp_log         = arp_l,
+    shift_sqrt_pct  = round(100 * (arp_b - arp_o) / arp_o, 1),
+    shift_log_pct   = round(100 * (arp_l - arp_o) / arp_o, 1),
+    sqrt_vs_log_pct = round(100 * abs(arp_b - arp_l) / arp_b, 1),
+    pearson         = round(cr[["pearson"]], 3),
+    spearman        = round(cr[["spearman"]], 3)
+  )
+}))
+
+cat("\n--- Accessibility correction on both extents ---\n")
+extent_summary |>
+  mutate(across(starts_with("arp_"), ~ format(round(.), big.mark = ","))) |>
+  print(row.names = FALSE)
+
+write.csv(extent_summary, file.path(DIR_TABLES, "bias_correction_by_extent.csv"),
+          row.names = FALSE)
+
 # -------------------- State-level ARP comparison ----------------------------
 
 adm1 <- geodata::gadm(country = "SDN", level = 1, path = here::here("data", "raw"))
@@ -403,6 +455,35 @@ state_comparison |>
   print(right = FALSE)
 
 write.csv(state_comparison, file.path(DIR_TABLES, "arp_by_state_bias_comparison.csv"),
+          row.names = FALSE)
+
+# ------------------ State-level comparison, both extents --------------------
+# outside_delta = the part of each state's change from cells outside the mask
+
+state_sum <- function(r) {
+  terra::extract(r, adm1, fun = "sum", na.rm = TRUE, ID = FALSE)[[1]]
+}
+
+state_both <- data.frame(
+  state          = adm1$NAME_1,
+  full_uniform   = state_sum(pop_aligned * suit_mx),
+  full_sqrt      = state_sum(pop_aligned * suit_biased),
+  masked_uniform = state_sum(pop_aligned * suit_mx_masked),
+  masked_sqrt    = state_sum(pop_aligned * suit_biased_masked)
+) |>
+  mutate(
+    full_delta    = full_sqrt - full_uniform,
+    masked_delta  = masked_sqrt - masked_uniform,
+    outside_delta = full_delta - masked_delta
+  ) |>
+  arrange(desc(full_delta))
+
+cat("\nState-level change from accessibility correction, both extents:\n")
+state_both |>
+  mutate(across(-state, ~ format(round(.), big.mark = ","))) |>
+  print(right = FALSE)
+
+write.csv(state_both, file.path(DIR_TABLES, "arp_by_state_bias_both_extents.csv"),
           row.names = FALSE)
 
 # -------------------- Suitability map figure --------------------------------

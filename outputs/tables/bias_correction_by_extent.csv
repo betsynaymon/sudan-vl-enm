@@ -1,0 +1,3 @@
+"extent","arp_uniform","arp_sqrt","arp_log","shift_sqrt_pct","shift_log_pct","sqrt_vs_log_pct","pearson","spearman"
+"full",13981495.1181963,15094695.998895,14390645.8510167,8,2.9,4.7,0.984,0.983
+"masked",11540183.6271274,11239921.3004617,11058937.3013399,-2.6,-4.2,1.6,0.994,0.995
