@@ -19,6 +19,8 @@
 #          outputs/tables/arp_by_state.csv
 #          outputs/figures/threshold_sensitivity_curve.png
 #          outputs/figures/threshold_sensitivity_curve.pdf
+#          outputs/tables/arp_by_state_diagnostics.csv
+#          outputs/tables/mess_limiting_variable_by_state.csv
 # ============================================================================
 
 source(here::here("R", "params.R"))
@@ -141,6 +143,84 @@ cat("maxSSS ARP:       ", format(round(arp_maxsss), big.mark = ","),
 cat("Risk-weighted ARP:", format(round(arp_weighted), big.mark = ","),
     "(", round(100 * arp_weighted / total_pop, 1), "%)\n")
 
+# ------------------ ARP by extrapolation and mask status --------------------
+# Decomposes the risk-weighted ARP by
+#   MESS status:     interpolation (MESS >= 0) vs extrapolation (MESS < 0), from 07
+#   ecological mask: inside (>= 150 mm rainfall) vs outside
+# Shows how much of the headline estimate sits in novel environments or in
+# cells the ecological mask defines as outside the transmission system.
+
+mess_r <- rast(file.path(DIR_SURFACES, "mess_surface.tif"))
+eco_r  <- rast(file.path(DIR_COVARIATES, "ecological_mask_150mm.tif"))
+
+stopifnot(
+  "MESS grid differs from suitability grid" =
+    compareGeom(mess_r, suit_r, stopOnError = FALSE),
+  "Mask grid differs from suitability grid" =
+    compareGeom(eco_r, suit_r, stopOnError = FALSE)
+)
+
+novel_r   <- mess_r < 0     # TRUE = extrapolation
+in_mask_r <- eco_r == 1     # TRUE = inside the >= 150 mm domain
+
+risk_weighted_r <- pop_aligned * suit_r
+
+arp_where <- function(cond_r) {
+  global(risk_weighted_r * cond_r, "sum", na.rm = TRUE)[[1]]
+}
+
+arp_interp   <- arp_where(!novel_r)
+arp_novel    <- arp_where(novel_r)
+arp_in_mask  <- arp_where(in_mask_r)
+arp_out_mask <- arp_where(!in_mask_r)
+
+# 2 x 2: MESS status x mask status
+arp_cross <- expand.grid(novel = c(FALSE, TRUE), in_mask = c(TRUE, FALSE))
+arp_cross$arp <- mapply(function(n, m) {
+  cond_mess <- if (n) novel_r else !novel_r
+  cond_mask <- if (m) in_mask_r else !in_mask_r
+  arp_where(cond_mess & cond_mask)
+}, arp_cross$novel, arp_cross$in_mask)
+arp_cross$pct_of_headline <- round(100 * arp_cross$arp / arp_weighted, 1)
+
+fmt <- function(x) format(round(x), big.mark = ",")
+
+cat("\n--- Risk-weighted ARP by MESS and mask status ---\n")
+cat("Interpolation (MESS >= 0):", fmt(arp_interp), "\n")
+cat("Extrapolation (MESS < 0): ", fmt(arp_novel),
+    "(", round(100 * arp_novel / arp_weighted, 1), "% of headline )\n")
+cat("Inside ecological mask:   ", fmt(arp_in_mask), "\n")
+cat("Outside ecological mask:  ", fmt(arp_out_mask),
+    "(", round(100 * arp_out_mask / arp_weighted, 1), "% of headline )\n")
+cat("Check: MESS parts =", fmt(arp_interp + arp_novel),
+    "| mask parts =", fmt(arp_in_mask + arp_out_mask),
+    "| headline =", fmt(arp_weighted), "\n\n")
+print(transform(arp_cross, arp = fmt(arp)), row.names = FALSE)
+
+
+# ---------------- ARP beyond the presence thermal range ---------------------
+# The LST-night response plateaus near 1.0 above ~24°C, but no training
+# presence has a night warmer than the presence maximum. Cells hotter than
+# that get full thermal suitability without presence support. MESS doesn't
+# flag them because they sit inside the background range. This checks which cells
+# on the raster are hotter than any training presences
+
+lst_r <- rast(file.path(DIR_COVARIATES, COV_FILES["lst_night"]))
+stopifnot("LST grid differs from suitability grid" =
+            compareGeom(lst_r, suit_r, stopOnError = FALSE))
+
+lst_pres_max <- max(train$occ_env$lst_night)
+hot_r <- lst_r > lst_pres_max
+
+arp_hot <- arp_where(hot_r)
+pop_hot <- global(pop_aligned * hot_r, "sum", na.rm = TRUE)[[1]]
+
+cat("\n--- Risk-weighted ARP beyond the presence LST-night maximum ---\n")
+cat("Presence LST-night maximum:", round(lst_pres_max, 2), "\u00b0C\n")
+cat("Population in hotter cells:       ", fmt(pop_hot), "\n")
+cat("Risk-weighted ARP in hotter cells:", fmt(arp_hot),
+    "(", round(100 * arp_hot / arp_weighted, 1), "% of headline )\n")
+
 # -------------------- Threshold sensitivity curve ---------------------------
 
 thresholds <- seq(0, 0.95, by = 0.01)
@@ -207,6 +287,63 @@ state_arp |>
                 ~ format(round(.), big.mark = ","))) |>
   print(right = FALSE)
 
+# ----------------------- State-level diagnostics ----------------------------
+# Where the risk-weighted ARP sits relative to the ecological mask, MESS
+# extrapolation, and nights hotter than any training presence.
+
+state_sum <- function(r) {
+  terra::extract(r, adm1, fun = "sum", na.rm = TRUE, ID = FALSE)[[1]]
+}
+
+state_diag <- data.frame(
+  state         = adm1$NAME_1,
+  arp_weighted  = state_sum(risk_weighted_r),
+  arp_in_mask   = state_sum(risk_weighted_r * in_mask_r),
+  arp_novel     = state_sum(risk_weighted_r * novel_r),
+  arp_hot_night = state_sum(risk_weighted_r * hot_r)
+) |>
+  mutate(
+    pct_outside_mask = round(100 * (1 - arp_in_mask / arp_weighted), 1),
+    pct_novel        = round(100 * arp_novel / arp_weighted, 1),
+    pct_hot_night    = round(100 * arp_hot_night / arp_weighted, 1)
+  ) |>
+  arrange(desc(arp_weighted))
+
+cat("\nState-level ARP diagnostics:\n")
+state_diag |>
+  mutate(across(c(arp_weighted, arp_in_mask, arp_novel, arp_hot_night),
+                ~ format(round(.), big.mark = ","))) |>
+  print(right = FALSE)
+
+
+# ------------------- What makes novel cells novel? --------------------------
+# In MESS < 0 cells, which covariate is furthest outside the training range
+# (the "most dissimilar variable")? Weighted by risk-weighted ARP, by state.
+
+mess_vars <- rast(file.path(DIR_SURFACES, "mess_by_variable.tif"))
+stopifnot("MESS layers differ from suitability grid" =
+            compareGeom(mess_vars, suit_r, stopOnError = FALSE))
+
+mod_r <- which.min(mess_vars)   # index of the covariate with the lowest score
+
+mod_by_state <- bind_rows(lapply(seq_len(nlyr(mess_vars)), function(i) {
+  data.frame(
+    state    = adm1$NAME_1,
+    variable = names(mess_vars)[i],
+    arp      = state_sum(risk_weighted_r * novel_r * (mod_r == i)),
+    cells    = state_sum(novel_r * (mod_r == i))
+  )
+})) |>
+  filter(cells > 0) |>
+  group_by(state) |>
+  mutate(pct_of_state_novel_arp =
+           if (sum(arp) > 0) round(100 * arp / sum(arp), 1) else NA_real_) |>
+  ungroup() |>
+  arrange(state, desc(arp))
+
+cat("\nMost dissimilar variable in novel cells, by state:\n")
+mod_by_state |> mutate(arp = fmt(arp)) |> print(n = Inf)
+
 # --------------------------------- Save -------------------------------------
 
 write.csv(state_arp, file.path(DIR_TABLES, "arp_by_state.csv"), row.names = FALSE)
@@ -225,10 +362,20 @@ arp_summary <- data.frame(
   total_pop  = round(total_pop)
 )
 write.csv(arp_summary, file.path(DIR_TABLES, "arp_summary.csv"), row.names = FALSE)
+write.csv(state_diag, file.path(DIR_TABLES, "arp_by_state_diagnostics.csv"),
+          row.names = FALSE)
+write.csv(arp_cross, file.path(DIR_TABLES, "arp_by_mess_and_mask.csv"),
+          row.names = FALSE)
+write.csv(mod_by_state,
+          file.path(DIR_TABLES, "mess_limiting_variable_by_state.csv"),
+          row.names = FALSE)
 
 cat("\nSaved:\n")
 cat("  ", file.path(DIR_TABLES, "arp_by_state.csv"), "\n")
 cat("  ", file.path(DIR_TABLES, "arp_summary.csv"), "\n")
+cat("  ", file.path(DIR_TABLES, "arp_by_state_diagnostics.csv"), "\n")
+cat("  ", file.path(DIR_TABLES, "arp_by_mess_and_mask.csv"), "\n")
+
 cat("  ", file.path(DIR_SURFACES, "binary_p10.tif"), "\n")
 cat("  ", file.path(DIR_SURFACES, "binary_maxsss.tif"), "\n")
 cat("  ", file.path(DIR_SURFACES, "worldpop_2025_aligned.tif"), "\n")

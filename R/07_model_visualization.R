@@ -25,6 +25,7 @@
 #          outputs/figures/mess_extrapolation.png
 #          outputs/tables/response_curve_features.csv
 #          outputs/tables/covariate_spread.csv
+#          outputs/tables/mess_by_variable.tif
 # ============================================================================
 
 source(here::here("R", "params.R"))
@@ -423,7 +424,31 @@ ggsave(file.path(DIR_FIGS, "mess_extrapolation.png"), p_mess,
        width = 10, height = 8, dpi = 300)
 cat("Saved mess_extrapolation.png\n")
 
-cat("07_model_visualization.R complete\n")
+# ========================= MESS BY VARIABLE ==================================
+# Per-covariate similarity scores (dismo::mess, full = TRUE). Used in 08 to
+# identify which covariate makes novel cells novel. Kept separate from the
+# overall MESS above, so that surface and its outputs are unchanged.
+
+mess_vars_path <- file.path(DIR_SURFACES, "mess_by_variable.tif")
+
+if (file.exists(mess_vars_path)) {
+  cat("Loading cached per-variable MESS\n")
+  mess_vars <- rast(mess_vars_path)
+} else {
+  ref_data_v   <- rbind(occ_env[, retained_vars], bg_env[, retained_vars])
+  covs_sudan_v <- mask(covs, vect(sudan))
+  mess_full    <- rast(dismo::mess(x = raster::stack(covs_sudan_v),
+                                   v = ref_data_v, full = TRUE))
+  names(mess_full) <- c(retained_vars, "mess")   # per-variable layers, then MESS
+
+  mess_vars <- mess_full[[retained_vars]]
+  writeRaster(mess_vars, mess_vars_path, overwrite = TRUE)
+  cat("Computed and saved per-variable MESS\n")
+}
+
+# Sanity check: the lowest per-variable score should equal the overall MESS
+mess_diff <- global(abs(min(mess_vars) - mess_r), "max", na.rm = TRUE)[[1]]
+cat("Max |min(per-variable) - overall MESS|:", signif(mess_diff, 3), "\n")
 
 # ================== DISSERTATION FIGURE ======================================
 # Produces polished versions of the suitability and MESS maps using the
@@ -621,3 +646,5 @@ save_fig(file.path(DIR_FIGS, "fig_response_importance.png"), fig_resp_imp,
 save_fig(file.path(DIR_FIGS, "fig_response_importance.pdf"), fig_resp_imp,
          width = FIG_WIDTH_FULL, height = 12)
 cat("Saved fig_response_importance\n")
+
+cat("07_model_visualization.R complete\n")

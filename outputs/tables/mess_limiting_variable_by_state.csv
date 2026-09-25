@@ -1,0 +1,16 @@
+"state","variable","arp","cells","pct_of_state_novel_arp"
+"East Darfur","river_dist",3.53620320941445,1,100
+"Kassala","river_dist",0.0261811473342659,1,100
+"North Darfur","rainfall",19.3567893897284,92184,99.9
+"North Darfur","river_dist",0.0229477971389329,2,0.1
+"North Kurdufan","river_dist",546.816541275386,25,100
+"North Kurdufan","rainfall",0.00709782814147273,25,0
+"Northern","rainfall",23847.6866277312,363515,100
+"Red Sea","rainfall",180299.81667049,155261,100
+"Red Sea","slope",0,5,0
+"Red Sea","river_dist",0,45,0
+"River Nile","rainfall",29300.6605636262,75168,100
+"River Nile","river_dist",0,2,0
+"South Darfur","river_dist",0,3,NA
+"West Kurdufan","river_dist",5.84664291218678,1,100
+"White Nile","river_dist",0,1,NA
