@@ -1,10 +1,34 @@
 # ============================================================================
 # 15_variable_sensitivity.R
-# Refits MaxEnt with five alternative covariate configurations (B–D and
-# seasonal A_dry/A_wet) to test how sensitive the suitability surface and ARP
-# are to covariate selection. All variants share the same occurrence points,
-# background points, and spatial CV fold structure. Set A (annual) is the
+# Tests how sensitive the suitability surface and ARP are to covariate
+# selection by refitting MaxEnt with nine alternative covariate sets. Set A
+# (annual; slope, river distance, vertisols, LST night, rainfall) is the
 # primary model; its results are loaded for comparison.
+#
+# Variants, by type:
+#   Seasonal composite           A_dry, A_wet   dry- / wet-season LST night
+#   Alternative representative   B_annual       NDVI for rainfall
+#     (one covariate swapped     E_elevation    elevation for LST night
+#      for another from the      F_lstday       LST day for rainfall
+#      same correlated cluster)  G_treecover    tree cover for rainfall
+#   Adds correlated covariate    C_annual       LST day alongside rainfall
+#     (violates the |r| >= 0.7   D_annual       tree cover alongside rainfall
+#      screening)
+#   Drops covariate              H_noriver      river distance removed
+#
+# Each variant is fitted under two selection rules:
+#   Highest CBI       — feature classes and regularisation chosen by the best
+#                       spatial-CV CBI across the full tuning grid (the
+#                       approach reported in the dissertation).
+#   Primary settings  — fixed at the primary model's settings, so any change
+#                       reflects the covariate set alone. CV scores come
+#                       from the same tuning grid.
+#
+# All variants share the same occurrence points, background points and
+# spatial CV folds, with year-matched covariate extraction. Predictions use
+# long-term mean surfaces. ARP is reported on the full surface and within the
+# ecological mask. Per-variant results are cached; delete
+# variant_summary_{variant}.rds to refit a variant.
 #
 # Inputs:  data/processed/occurrences_thinned.csv
 #          data/processed/background_points.csv
@@ -15,9 +39,12 @@
 #          outputs/tables/arp_summary.csv
 #          outputs/surfaces/worldpop_2025_aligned.tif
 #          data/raw/ (all covariate rasters)
-# Outputs: outputs/models/maxent_final_{variant}.rds  (5 variant models)
-#          outputs/surfaces/maxent_suitability_{variant}.tif  (5 surfaces)
-#          outputs/tables/enmeval_results_{variant}.csv  (5 tuning tables)
+# Outputs: outputs/models/maxent_final_{variant}.rds        (highest CBI)
+#          outputs/models/maxent_final_{variant}_fixed.rds  (primary settings)
+#          outputs/surfaces/maxent_suitability_{variant}.tif
+#          outputs/surfaces/maxent_suitability_{variant}_fixed.tif
+#          outputs/tables/enmeval_results_{variant}.csv     (tuning grids)
+#          outputs/tables/variant_summary_{variant}.rds     (cached results)
 #          outputs/tables/variable_sensitivity_comparison.csv
 #          outputs/figures/sensitivity_response_shared.png
 #          outputs/figures/sensitivity_response_unique.png
@@ -58,6 +85,7 @@ cat("Presences:", nrow(occ), "| Background:", nrow(bg), "\n")
 variants <- list(
 
   B_annual = list(
+    type = "Alternative representative (NDVI for rainfall)",
     vars = c("slope", "river_dist", "vertisols", "lst_night", "ndvi"),
     static = c(slope = "slope_1km.tif", river_dist = "river_distance_1km.tif",
                vertisols = "vertisols_1km.tif"),
@@ -68,6 +96,7 @@ variants <- list(
   ),
 
   C_annual = list(
+    type = "Adds correlated covariate (LST day with rainfall, |r| = 0.72)",
     vars = c("slope", "river_dist", "vertisols", "lst_night", "lst_day", "rainfall"),
     static = c(slope = "slope_1km.tif", river_dist = "river_distance_1km.tif",
                vertisols = "vertisols_1km.tif"),
@@ -80,6 +109,7 @@ variants <- list(
   ),
 
   D_annual = list(
+    type = "Adds correlated covariate (tree cover with rainfall, |r| = 0.70)",
     vars = c("slope", "river_dist", "vertisols", "lst_night", "rainfall", "treecover"),
     static = c(slope = "slope_1km.tif", river_dist = "river_distance_1km.tif",
                vertisols = "vertisols_1km.tif"),
@@ -92,6 +122,7 @@ variants <- list(
   ),
 
   A_dry = list(
+    type = "Seasonal composite (dry-season LST night)",
     vars = c("slope", "river_dist", "vertisols", "lst_night", "rainfall"),
     static = c(slope = "slope_1km.tif", river_dist = "river_distance_1km.tif",
                vertisols = "vertisols_1km.tif"),
@@ -102,12 +133,56 @@ variants <- list(
   ),
 
   A_wet = list(
+    type = "Seasonal composite (wet-season LST night)",
     vars = c("slope", "river_dist", "vertisols", "lst_night", "rainfall"),
     static = c(slope = "slope_1km.tif", river_dist = "river_distance_1km.tif",
                vertisols = "vertisols_1km.tif"),
     dynamic_annual = c(lst_night = "lst_night_wet_{year}_1km.tif",
                        rainfall = "rainfall_{year}_1km.tif"),
     dynamic_mean = c(lst_night = "lst_night_wet_mean_2000_2024_1km.tif",
+                     rainfall = "rainfall_mean_2000_2024_1km.tif")
+  ),
+
+  # ---- Clean within-cluster swaps and a drop test ----
+
+  E_elevation = list(
+    type = "Alternative representative (elevation for LST night)",
+    vars = c("slope", "river_dist", "vertisols", "elevation", "rainfall"),
+    static = c(slope = "slope_1km.tif", river_dist = "river_distance_1km.tif",
+               vertisols = "vertisols_1km.tif", elevation = "elevation_1km.tif"),
+    dynamic_annual = c(rainfall = "rainfall_{year}_1km.tif"),
+    dynamic_mean = c(rainfall = "rainfall_mean_2000_2024_1km.tif")
+  ),
+
+  F_lstday = list(
+    type = "Alternative representative (LST day for rainfall)",
+    vars = c("slope", "river_dist", "vertisols", "lst_night", "lst_day"),
+    static = c(slope = "slope_1km.tif", river_dist = "river_distance_1km.tif",
+               vertisols = "vertisols_1km.tif"),
+    dynamic_annual = c(lst_night = "lst_night_annual_{year}_1km.tif",
+                       lst_day = "lst_day_annual_{year}_1km.tif"),
+    dynamic_mean = c(lst_night = "lst_night_annual_mean_2000_2024_1km.tif",
+                     lst_day = "lst_day_annual_mean_2000_2024_1km.tif")
+  ),
+
+  G_treecover = list(
+    type = "Alternative representative (tree cover for rainfall)",
+    vars = c("slope", "river_dist", "vertisols", "lst_night", "treecover"),
+    static = c(slope = "slope_1km.tif", river_dist = "river_distance_1km.tif",
+               vertisols = "vertisols_1km.tif"),
+    dynamic_annual = c(lst_night = "lst_night_annual_{year}_1km.tif",
+                       treecover = "treecover_{year}_1km.tif"),
+    dynamic_mean = c(lst_night = "lst_night_annual_mean_2000_2024_1km.tif",
+                     treecover = "treecover_mean_2000_2024_1km.tif")
+  ),
+
+  H_noriver = list(
+    type = "Drops covariate (river distance)",
+    vars = c("slope", "vertisols", "lst_night", "rainfall"),
+    static = c(slope = "slope_1km.tif", vertisols = "vertisols_1km.tif"),
+    dynamic_annual = c(lst_night = "lst_night_annual_{year}_1km.tif",
+                       rainfall = "rainfall_{year}_1km.tif"),
+    dynamic_mean = c(lst_night = "lst_night_annual_mean_2000_2024_1km.tif",
                      rainfall = "rainfall_mean_2000_2024_1km.tif")
   )
 )
@@ -261,10 +336,18 @@ tune_maxent <- function(prep, variant) {
   bind_rows(results)
 }
 
-fit_and_predict <- function(prep, tuning_res, variant, variant_name) {
-  # Select best model by CBI
-  best <- tuning_res[which.max(tuning_res$cbi.val.avg), ]
-  cat("  Selected:", best$fc, "rm =", best$rm,
+fit_and_predict <- function(prep, tuning_res, variant, variant_name, fixed = NULL) {
+  # Select settings: highest CBI (default), or the primary model's settings
+  if (is.null(fixed)) {
+    best <- tuning_res[which.max(tuning_res$cbi.val.avg), ]
+    rule <- "Highest CBI"
+  } else {
+    best <- tuning_res[tuning_res$fc == fixed$fc & tuning_res$rm == fixed$rm, ]
+    stopifnot("Primary settings missing from tuning grid" = nrow(best) == 1)
+    rule <- "Primary settings"
+    variant_name <- paste0(variant_name, "_fixed")
+  }
+  cat("  [", rule, "] Selected:", best$fc, "rm =", best$rm,
       "| CBI:", round(best$cbi.val.avg, 3),
       "| AUC:", round(best$auc.val.avg, 3), "\n")
 
@@ -308,6 +391,8 @@ fit_and_predict <- function(prep, tuning_res, variant, variant_name) {
   arp_p10      <- global(pop_aligned * (suit_r >= p10), "sum", na.rm = TRUE)[[1]]
   arp_maxsss   <- global(pop_aligned * (suit_r >= maxsss), "sum", na.rm = TRUE)[[1]]
   arp_weighted <- global(pop_aligned * suit_r, "sum", na.rm = TRUE)[[1]]
+  arp_weighted_masked <- global(pop_aligned * mask(suit_r, mask_r, maskvalues = 0),
+                                "sum", na.rm = TRUE)[[1]]
 
   cat("  ARP (risk-weighted):", format(round(arp_weighted), big.mark = ","), "\n")
 
@@ -322,22 +407,36 @@ fit_and_predict <- function(prep, tuning_res, variant, variant_name) {
           row.names = FALSE)
 
   data.frame(
-    variant = variant_name, fc = best$fc, rm = best$rm,
+    variant = variant_name, type = variant$type, fc = best$fc, rm = best$rm,
     cbi = round(best$cbi.val.avg, 3), cbi_sd = round(best$cbi.val.sd, 3),
     auc = round(best$auc.val.avg, 3), auc_sd = round(best$auc.val.sd, 3),
     p10_thresh = round(p10, 4), maxsss_thresh = round(maxsss, 4),
     arp_p10 = round(arp_p10), arp_maxsss = round(arp_maxsss),
-    arp_weighted = round(arp_weighted), n_coefs = length(final_mod$betas)
+    arp_weighted = round(arp_weighted),
+    arp_weighted_masked = round(arp_weighted_masked),
+    n_coefs = length(final_mod$betas)
   )
 }
 
 # ================================ RUN VARIANTS ==============================
+primary_tuning <- readRDS(file.path(DIR_MODELS, "selected_tuning.rds"))
+primary_fixed  <- list(fc = primary_tuning$fc, rm = primary_tuning$rm)
+cat("Fixed-settings refits use:", primary_fixed$fc, "rm =", primary_fixed$rm, "\n")
 
 results_list <- list()
 
 for (vname in names(variants)) {
+  summary_path <- file.path(DIR_TABLES, paste0("variant_summary_", vname, ".rds"))
+
+  if (file.exists(summary_path)) {
+    cat("\nLoading cached results for", vname, "\n")
+    results_list[[vname]] <- readRDS(summary_path)
+    next
+  }
+
   cat("\n", strrep("=", 50), "\n")
   cat("Running variant:", vname, "\n")
+  cat("Type:", variants[[vname]]$type, "\n")
   cat("Variables:", paste(variants[[vname]]$vars, collapse = ", "), "\n")
   cat(strrep("=", 50), "\n")
 
@@ -350,9 +449,11 @@ for (vname in names(variants)) {
   set.seed(SEED)
   tuning_res <- tune_maxent(prep, variants[[vname]])
 
-  results_list[[vname]] <- fit_and_predict(
-    prep, tuning_res, variants[[vname]], vname
-  )
+  res_auto  <- fit_and_predict(prep, tuning_res, variants[[vname]], vname)
+  res_fixed <- fit_and_predict(prep, tuning_res, variants[[vname]], vname,
+                               fixed = primary_fixed)
+  results_list[[vname]] <- bind_rows(res_auto, res_fixed)
+  saveRDS(results_list[[vname]], summary_path)
 
   cat("  Done.\n")
 }
@@ -370,6 +471,8 @@ baseline_best <- baseline_res |>
 
 baseline_row <- data.frame(
   variant = "A_annual", fc = baseline_tuning$fc, rm = baseline_tuning$rm,
+  type = "Primary",
+  rule = "Ecological plausibility",
   cbi = round(baseline_best$cbi.val.avg, 3),
   cbi_sd = round(baseline_best$cbi.val.sd, 3),
   auc = round(baseline_best$auc.val.avg, 3),
@@ -379,17 +482,31 @@ baseline_row <- data.frame(
   arp_p10 = baseline_arp$arp[baseline_arp$metric == "p10"],
   arp_maxsss = baseline_arp$arp[baseline_arp$metric == "maxSSS"],
   arp_weighted = baseline_arp$arp[baseline_arp$metric == "risk_weighted"],
+  arp_weighted_masked = global(pop_aligned * mask(rast(file.path(DIR_SURFACES,
+                          "maxent_suitability.tif")), mask_r, maskvalues = 0),
+                          "sum", na.rm = TRUE)[[1]],
   n_coefs = length(baseline_mod$betas)
 )
 
 comparison <- bind_rows(baseline_row, bind_rows(results_list))
 
+comparison <- comparison |>
+  mutate(
+    rule = case_when(
+      variant == "A_annual"     ~ "Ecological plausibility",
+      grepl("_fixed$", variant) ~ "Primary settings",
+      TRUE                      ~ "Highest CBI"
+    ),
+    arp_weighted_masked = round(arp_weighted_masked)
+  )
+
 cat("\n--- Variable sensitivity comparison ---\n")
 comparison |>
   mutate(arp_weighted_m = round(arp_weighted / 1e6, 1)) |>
-  select(variant, fc, rm, cbi, cbi_sd, auc, auc_sd, arp_weighted_m) |>
-  arrange(desc(cbi)) |>
-  print()
+  select(variant, type, rule, fc, rm, cbi, auc, arp_weighted_m, arp_weighted_masked) |>
+  arrange(variant, rule) |>
+  as_tibble() |>
+  print(n = Inf, width = Inf)
 
 write.csv(comparison, file.path(DIR_TABLES, "variable_sensitivity_comparison.csv"),
           row.names = FALSE)
@@ -409,11 +526,16 @@ all_variants <- c(
 
 model_files <- c(
   A_annual = "maxent_final.rds",
-  B_annual = "maxent_final_B_annual.rds",
-  C_annual = "maxent_final_C_annual.rds",
-  D_annual = "maxent_final_D_annual.rds",
-  A_dry    = "maxent_final_A_dry.rds",
-  A_wet    = "maxent_final_A_wet.rds"
+  setNames(paste0("maxent_final_", names(variants), ".rds"), names(variants))
+)
+
+variant_order <- c("A_annual", names(variants))
+
+variant_colours <- c(
+  A_annual = "grey30", A_dry = "#B15928", A_wet = "#5E3C99",
+  B_annual = "#1B9E77", C_annual = "#D95F02", D_annual = "#7570B3",
+  E_elevation = "#E7298A", F_lstday = "#66A61E",
+  G_treecover = "#E6AB02", H_noriver = "#A6761D"
 )
 
 n_pts <- 200
@@ -462,13 +584,8 @@ var_labels <- c(
   slope = "Slope (degrees)", river_dist = "Distance to river (m)",
   vertisols = "Vertisols (0/1)", lst_night = "LST night (\u00b0C)",
   rainfall = "Rainfall (mm/yr)", ndvi = "NDVI",
-  lst_day = "LST day (\u00b0C)", treecover = "Tree cover (%)"
-)
-
-variant_order <- c("A_annual", "A_dry", "A_wet", "B_annual", "C_annual", "D_annual")
-variant_colours <- c(
-  A_annual = "grey30", A_dry = "#E66101", A_wet = "#5E3C99",
-  B_annual = "#1B9E77", C_annual = "#D95F02", D_annual = "#7570B3"
+  lst_day = "LST day (\u00b0C)", treecover = "Tree cover (%)",
+  elevation = "Elevation (m)"
 )
 
 response_df <- response_df |>
@@ -495,7 +612,7 @@ ggsave(file.path(DIR_FIGS, "sensitivity_response_shared.png"), p_shared,
 cat("Saved sensitivity_response_shared.png\n")
 
 # Unique variables
-unique_vars <- c("ndvi", "lst_day", "treecover")
+unique_vars <- c("ndvi", "lst_day", "treecover", "elevation")
 
 p_unique <- ggplot(response_df |> filter(variable %in% unique_vars),
        aes(x = value, y = suit, colour = variant)) +

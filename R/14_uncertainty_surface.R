@@ -3,7 +3,7 @@
 # Refits MaxEnt on each spatial CV fold's training set, predicts each to the
 # full raster, and computes pixelwise mean and SD across the 4 surfaces.
 # Also computes fold-excluded ARP under all three estimation methods to
-# quantify how much the estimate depends on any single geographic cluster.
+# test sensitivity to subsampling.
 #
 # Inputs:  outputs/models/training_data.rds
 #          outputs/models/spatial_cv_folds.rds
@@ -17,6 +17,7 @@
 #          outputs/surfaces/maxent_cv_sd.tif
 #          outputs/models/cv_fold_predictions.rds  (cached)
 #          outputs/tables/arp_fold_uncertainty.csv
+#          outputs/tables/arp_fold_uncertainty_masked.csv
 #          outputs/figures/prediction_uncertainty_sd.png
 #          outputs/figures/fig_prediction_uncertainty_sd.png
 # ============================================================================
@@ -81,7 +82,7 @@ cv_pred_path <- file.path(DIR_MODELS, "cv_fold_predictions.rds")
 
 if (file.exists(cv_pred_path)) {
   cat("Loading cached fold predictions\n")
-  pred_stack <- readRDS(cv_pred_path, terra::unwrap)
+  pred_stack <- lapply(readRDS(cv_pred_path), terra::unwrap)
 } else {
   pred_stack <- list()
 
@@ -171,6 +172,13 @@ pop_aligned <- rast(file.path(DIR_SURFACES, "worldpop_2025_aligned.tif"))
 occ_xy <- as.matrix(train$occ_clean[, c("longitude", "latitude")])
 bg_xy  <- as.matrix(train$bg_clean[, c("longitude", "latitude")])
 
+# Fold models are refit here so thresholds come from year-matched
+# predictions, as in 08. maxnet is deterministic, so the refit reproduces
+# the models behind the cached surfaces (checked below).
+
+mask_na    <- subst(rast(file.path(DIR_COVARIATES, "ecological_mask_150mm.tif")), 0, NA)
+arp_masked <- numeric(K_FOLDS)
+
 fold_arps <- data.frame(
   fold_excluded = 1:K_FOLDS,
   arp_weighted  = numeric(K_FOLDS),
@@ -181,19 +189,37 @@ fold_arps <- data.frame(
 for (k in 1:K_FOLDS) {
   pred_k <- pred_stack[[k]]
 
-  fold_arps$arp_weighted[k] <- global(pop_aligned * pred_k,
-                                      "sum", na.rm = TRUE)[[1]]
+  # Refit the fold-k model
+  train_idx <- df$fold != k
+  p_vec     <- as.numeric(as.character(df$pa[train_idx]))
+  env_mat   <- df[train_idx, vars]
+  mod_k <- maxnet(
+    p       = p_vec,
+    data    = env_mat,
+    f       = maxnet.formula(p = p_vec, data = env_mat, classes = best_classes),
+    regmult = tuning$rm
+  )
 
-  pred_at_occ <- terra::extract(pred_k, occ_xy)[[1]]
-  pred_at_bg  <- terra::extract(pred_k, bg_xy)[[1]]
+  # Check the refit matches the cached surface at the presence locations
+  ltm_at_occ <- terra::extract(cov_stack[[vars]], occ_xy)
+  chk <- max(abs(predict(mod_k, ltm_at_occ, type = "cloglog", clamp = TRUE)[, 1] -
+                 terra::extract(pred_k, occ_xy)[[1]]), na.rm = TRUE)
+  cat("Fold", k, "refit check (max diff):", signif(chk, 3), "\n")
 
-  p10_k <- quantile(pred_at_occ, 0.10, na.rm = TRUE)
+  # Year-matched predictions for thresholds, as in 08
+  pred_at_occ <- predict(mod_k, train$occ_env[, vars], type = "cloglog")[, 1]
+  pred_at_bg  <- predict(mod_k, train$bg_env[, vars],  type = "cloglog")[, 1]
+
+  fold_arps$arp_weighted[k] <- global(pop_aligned * pred_k, "sum", na.rm = TRUE)[[1]]
+  arp_masked[k] <- global(pop_aligned * mask(pred_k, mask_na), "sum", na.rm = TRUE)[[1]]
+
+  p10_k <- unname(quantile(pred_at_occ, 0.10))
   fold_arps$arp_p10[k] <- global(pop_aligned * (pred_k >= p10_k),
                                  "sum", na.rm = TRUE)[[1]]
 
   candidates <- sort(unique(c(pred_at_occ, pred_at_bg)))
-  sens <- sapply(candidates, function(t) mean(pred_at_occ >= t, na.rm = TRUE))
-  spec <- sapply(candidates, function(t) mean(pred_at_bg < t, na.rm = TRUE))
+  sens <- sapply(candidates, function(t) mean(pred_at_occ >= t))
+  spec <- sapply(candidates, function(t) mean(pred_at_bg < t))
   maxsss_k <- candidates[which.max(sens + spec)]
   fold_arps$arp_maxsss[k] <- global(pop_aligned * (pred_k >= maxsss_k),
                                     "sum", na.rm = TRUE)[[1]]
@@ -227,6 +253,19 @@ cat("\nFull-data model: weighted =",
     format(round(mx_arp$arp[mx_arp$metric == "p10"]), big.mark = ","),
     "| maxSSS =",
     format(round(mx_arp$arp[mx_arp$metric == "maxSSS"]), big.mark = ","), "\n")
+
+cat("\n--- Risk-weighted ARP within ecological mask, by fold excluded ---\n")
+fold_masked <- data.frame(fold_excluded = 1:K_FOLDS, arp_weighted_masked = arp_masked)
+print(transform(fold_masked,
+                arp_weighted_masked = format(round(arp_weighted_masked), big.mark = ",")),
+      row.names = FALSE)
+cat("Range:", format(round(min(arp_masked)), big.mark = ","), "\u2013",
+    format(round(max(arp_masked)), big.mark = ","),
+    "| mean:", format(round(mean(arp_masked)), big.mark = ","),
+    "| SD:", format(round(sd(arp_masked)), big.mark = ","), "\n")
+
+write.csv(fold_masked, file.path(DIR_TABLES, "arp_fold_uncertainty_masked.csv"),
+          row.names = FALSE)
 
 # Append summary rows
 full_weighted <- mx_arp$arp[mx_arp$metric == "risk_weighted"]
