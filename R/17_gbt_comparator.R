@@ -291,7 +291,17 @@ three_model <- data.frame(
 write.csv(three_model, file.path(DIR_TABLES, "three_model_comparison.csv"),
           row.names = FALSE)
 cat("Saved three_model_comparison.csv\n")
+cat("\nThree-model comparison (correlations on a shared 50k sample):\n")
+print(three_model, digits = 4)
 
+mask_r <- rast(file.path(DIR_COVARIATES, "ecological_mask_150mm.tif"))
+arp_in_mask <- function(r) {
+  global(pop_aligned * mask(r, mask_r, maskvalues = 0), "sum", na.rm = TRUE)[[1]]
+}
+cat("\nRisk-weighted ARP within ecological mask:\n")
+cat("  MaxEnt:", format(round(arp_in_mask(suit_mx)),  big.mark = ","), "\n")
+cat("  RF:    ", format(round(arp_in_mask(suit_rf)),  big.mark = ","), "\n")
+cat("  GBT:   ", format(round(arp_in_mask(suit_gbt)), big.mark = ","), "\n")
 # -------------------- Three-way suitability maps ----------------------------
 
 source(here::here("R", "plotting_theme.R"))
