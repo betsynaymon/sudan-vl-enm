@@ -163,6 +163,35 @@ arp_compare |>
 write.csv(arp_compare, file.path(DIR_TABLES, "arp_comparison_2025.csv"),
           row.names = FALSE)
 
+# ------------- 2025: within-mask ARP and unsupported hot nights -------------
+# Within-mask ARP for both surfaces, and how much ARP sits in cells with
+# nights hotter than any training presence
+
+fmt <- function(x) format(round(x), big.mark = ",")
+
+arp_w_2025_masked <- global(pop_aligned * pred_2025, "sum", na.rm = TRUE)[[1]]
+arp_w_ltm_masked  <- global(pop_aligned * mask(pred_ltm, mask_r, maskvalues = 0),
+                            "sum", na.rm = TRUE)[[1]]
+
+lst_pres_max <- max(train$occ_env$lst_night)
+hot_2025 <- covs_2025$lst_night > lst_pres_max
+hot_ltm  <- covs_ltm$lst_night  > lst_pres_max
+
+arp_hot_2025 <- global(pop_aligned * pred_2025_full * hot_2025, "sum", na.rm = TRUE)[[1]]
+arp_hot_ltm  <- global(pop_aligned * pred_ltm * hot_ltm, "sum", na.rm = TRUE)[[1]]
+pop_hot_2025 <- global(pop_aligned * hot_2025, "sum", na.rm = TRUE)[[1]]
+
+arp_w_ltm <- arp_ltm$arp[arp_ltm$metric == "risk_weighted"]
+
+cat("\n--- 2025 projection: extent and unsupported hot nights ---\n")
+cat("Within mask — LTM:", fmt(arp_w_ltm_masked), "| 2025:", fmt(arp_w_2025_masked),
+    "(", round(100 * (arp_w_2025_masked / arp_w_ltm_masked - 1), 1), "% )\n")
+cat("Presence LST-night maximum:", round(lst_pres_max, 2), "\u00b0C\n")
+cat("Population in hotter cells (2025):", fmt(pop_hot_2025), "\n")
+cat("ARP in hotter cells — LTM:", fmt(arp_hot_ltm), "| 2025:", fmt(arp_hot_2025), "\n")
+cat("Share of the 2025 increase from hotter cells:",
+    round(100 * (arp_hot_2025 - arp_hot_ltm) / (arp_weighted_2025 - arp_w_ltm), 1), "%\n")
+
 # -------------------- State-level comparison --------------------------------
 
 adm1 <- gadm(country = "SDN", level = 1, path = here::here("data", "raw"))
