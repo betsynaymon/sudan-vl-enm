@@ -94,10 +94,10 @@ cat("\n--- Mean suitability by endemic status ---\n")
 validation |>
   group_by(status) |>
   summarise(
-    n          = n(),
-    mean_suit  = round(mean(mean_suit), 3),
-    range      = paste0(round(min(mean_suit), 3), "\u2013", round(max(mean_suit), 3)),
-    .groups    = "drop"
+    n         = n(),
+    range     = paste0(round(min(mean_suit), 3), "\u2013", round(max(mean_suit), 3)),
+    mean_suit = round(mean(mean_suit), 3),
+    .groups   = "drop"
   ) |>
   arrange(desc(mean_suit)) |>
   print()
@@ -107,6 +107,10 @@ validation |>
   select(state, status, mean_suit, median_suit, max_suit) |>
   print(n = 18)
 
+validation <- validation |>
+  mutate(status_rank = match(status, c("No documented", "Reported", "Core endemic")))
+rho_state <- cor(validation$status_rank, validation$mean_suit, method = "spearman")
+cat("Spearman rho (status rank vs mean suitability):", round(rho_state, 2), "\n")
 # --------------------------------- Save -------------------------------------
 
 write.csv(validation |> select(state, status, evidence, mean_suit, median_suit, max_suit, n_cells),
