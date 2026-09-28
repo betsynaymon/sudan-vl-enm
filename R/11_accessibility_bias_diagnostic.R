@@ -118,4 +118,18 @@ rho <- cor(values(suit_r)[samp_idx],
 cat("\nSuitability-accessibility correlation (Spearman, 50k sample):",
     round(rho, 3), "\n")
 
+# Same correlation restricted to the ecological mask (excludes the hyper-arid
+# north, which is both remote and unsuitable and inflates the national figure)
+mask_r <- rast(file.path(DIR_COVARIATES, "ecological_mask_150mm.tif"))
+stopifnot(compareGeom(mask_r, suit_r, stopOnError = FALSE))
+
+valid_in <- which(!is.na(values(suit_r)) & !is.na(values(tt_aligned)) &
+                  values(mask_r) == 1)
+set.seed(SEED)
+samp_in <- sample(valid_in, min(50000, length(valid_in)))
+rho_in  <- cor(values(suit_r)[samp_in], values(tt_aligned)[samp_in],
+               method = "spearman")
+
+cat("Within ecological mask (Spearman, 50k sample):", round(rho_in, 3), "\n")
+
 cat("\n11_accessibility_bias_diagnostic.R complete\n")
