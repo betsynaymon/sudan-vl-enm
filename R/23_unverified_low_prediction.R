@@ -1,5 +1,5 @@
 # ============================================================================
-# 21_unverified_low_prediction.R
+# 23_unverified_low_prediction.R
 # ----------------------------------------------------------------------------
 # Quantifies the population living where the model predicts LOW suitability AND
 # where geographic accessibility is so poor that this low prediction has not
@@ -198,4 +198,4 @@ write.csv(state_tbl,   file.path(DIR_TABLES, "unverified_low_prediction_by_state
 cat("\nSaved:\n")
 cat("  ", file.path(DIR_TABLES, "unverified_low_prediction_summary.csv"), "\n")
 cat("  ", file.path(DIR_TABLES, "unverified_low_prediction_by_state.csv"), "\n")
-cat("21_unverified_low_prediction.R complete\n")
+cat("23_unverified_low_prediction.R complete\n")

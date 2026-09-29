@@ -1,6 +1,6 @@
 "metric","primary","augmented","shift_pct"
-"Risk-weighted",13981495,16637375,19
-"p10 binary (primary thresholds)",27469385,24485013,-10.9
-"maxSSS binary (primary thresholds)",12169058,17963492,47.6
+"Risk-weighted",11540184,16637375,44.2
+"p10 binary (primary thresholds)",19811390,24485013,23.6
+"maxSSS binary (primary thresholds)",11902425,17963492,50.9
 "p10 binary (own thresholds)",NA,22957065,NA
 "maxSSS binary (own thresholds)",NA,19620301,NA
