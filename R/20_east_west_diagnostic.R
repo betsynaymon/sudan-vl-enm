@@ -8,13 +8,15 @@
 # Inputs:  outputs/models/maxent_final.rds
 #          outputs/models/training_data.rds
 #          outputs/surfaces/maxent_suitability.tif
-#          outputs/surfaces/maxent_suitability_{variant}.tif  (5 variants)
+#          outputs/surfaces/maxent_suitability_{variant}.tif  (9 variants)
+#          outputs/surfaces/maxent_suitability_{variant}_fixed.tif
 #          outputs/surfaces/maxent_suitability_biased_bg.tif
 #          data/processed/occurrences_thinned.csv
 # Outputs: outputs/tables/east_west_diagnostic.csv
 #          outputs/figures/east_west_suitability_diagnostic.png
 #          outputs/figures/fig_east_west.png
 #          outputs/figures/fig_east_west.pdf
+#          outputs/figures/presence_suitability_by_longitude.png
 # ============================================================================
 
 source(here::here("R", "params.R"))
@@ -52,7 +54,18 @@ cat("p10:", round(p10, 4), "| maxSSS:", round(maxsss, 4), "\n")
 
 # ---------------------- Classify east vs west -------------------------------
 
-occ  <- read.csv(here::here("data", "processed", "occurrences_thinned.csv"))
+occ_all <- read.csv(here::here("data", "processed", "occurrences_thinned.csv"))
+
+# Keep the 98 training presences; print the thinned record(s) not in training
+occ_keys   <- paste(round(occ_all$longitude, 5), round(occ_all$latitude, 5), occ_all$year)
+train_keys <- paste(round(train$occ_clean$longitude, 5),
+                    round(train$occ_clean$latitude, 5), train$occ_clean$year)
+
+occ <- occ_all[occ_keys %in% train_keys, ]
+cat("Presences used:", nrow(occ), "of", nrow(occ_all), "thinned records\n")
+cat("Thinned record(s) not in the training set:\n")
+print(occ_all[!occ_keys %in% train_keys, ])
+
 adm1 <- gadm(country = "SDN", level = 1, path = here::here("data", "raw"))
 
 occ_sf <- st_as_sf(occ, coords = c("longitude", "latitude"), crs = 4326)
@@ -131,13 +144,15 @@ cat("Saved east_west_suitability_diagnostic.png\n")
 
 # ------------------- Cross-variant sensitivity ---------------------------
 
-variant_surfaces <- list(
-  A_annual = rast(file.path(DIR_SURFACES, "maxent_suitability.tif")),
-  B_annual = rast(file.path(DIR_SURFACES, "maxent_suitability_B_annual.tif")),
-  C_annual = rast(file.path(DIR_SURFACES, "maxent_suitability_C_annual.tif")),
-  D_annual = rast(file.path(DIR_SURFACES, "maxent_suitability_D_annual.tif")),
-  A_dry    = rast(file.path(DIR_SURFACES, "maxent_suitability_A_dry.tif")),
-  A_wet    = rast(file.path(DIR_SURFACES, "maxent_suitability_A_wet.tif"))
+variant_names <- c("B_annual", "C_annual", "D_annual", "A_dry", "A_wet",
+                   "E_elevation", "F_lstday", "G_treecover", "H_noriver")
+surface_names <- c(variant_names, paste0(variant_names, "_fixed"))
+
+variant_surfaces <- c(
+  list(A_annual = rast(file.path(DIR_SURFACES, "maxent_suitability.tif"))),
+  setNames(lapply(surface_names, function(v) {
+    rast(file.path(DIR_SURFACES, paste0("maxent_suitability_", v, ".tif")))
+  }), surface_names)
 )
 
 west_pts    <- occ_states |> filter(region == "West")
@@ -169,6 +184,88 @@ cat("\nWestern presences \u2014 accessibility-corrected surface:\n")
 print(round(west_suit_bias, 4))
 cat("Median:", round(median(west_suit_bias), 4),
     "| Max:", round(max(west_suit_bias), 4), "\n")
+
+# ------------- Breakdown by state, below-p10, and by longitude -------
+
+occ_states$cell <- cellFromXY(pred_ltm, occ_coords)
+occ_states$lon  <- occ_coords[, 1]
+
+cat("\nPresence suitability by state:\n")
+occ_states |>
+  st_drop_geometry() |>
+  group_by(NAME_1) |>
+  summarise(n = n(), distinct_cells = n_distinct(cell),
+            median_suit = round(median(suitability), 3),
+            min_suit    = round(min(suitability), 3), .groups = "drop") |>
+  arrange(desc(median_suit)) |>
+  print(n = Inf)
+
+cat("\nPresences below p10:\n")
+occ_states |>
+  st_drop_geometry() |>
+  filter(suitability < p10) |>
+  select(NAME_1, region, year, source, lon, suitability) |>
+  arrange(suitability) |>
+  print()
+
+p_lon <- ggplot(st_drop_geometry(occ_states),
+                aes(x = lon, y = suitability, colour = region)) +
+  geom_point(size = 2.5, alpha = 0.7) +
+  geom_hline(yintercept = p10, linetype = "dotted", colour = "grey50") +
+  scale_colour_manual(values = c("East" = "#B2182B", "West" = "#2166AC")) +
+  labs(x = "Longitude (\u00b0E)", y = "Predicted suitability (LTM surface)",
+       colour = NULL) +
+  theme_minimal()
+
+ggsave(file.path(DIR_FIGS, "presence_suitability_by_longitude.png"), p_lon,
+       width = 7, height = 5, dpi = 300, bg = "white")
+cat("Saved presence_suitability_by_longitude.png\n")
+
+# -------------- Breakdown by source type -----------------
+occ_states$source_type <- case_when(
+  grepl("radio_dabanga|IFRC|reliefweb|sudan_tribune", occ_states$source,
+        ignore.case = TRUE)          ~ "Humanitarian/news",
+  grepl("Pigott", occ_states$source) ~ "Pigott database",
+  TRUE                               ~ "Peer-reviewed"
+)
+
+occ_states |>
+  st_drop_geometry() |>
+  group_by(source_type) |>
+  summarise(n = n(), below_p10 = sum(suitability < p10),
+            median_suit = round(median(suitability), 3), .groups = "drop") |>
+  print()
+
+# --------- Below-p10 share by source type: humanitarian/news vs others -------
+# Exploratory (grouping chosen after inspecting the below-p10 records).
+
+src_df <- occ_states |>
+  st_drop_geometry() |>
+  mutate(news      = source_type == "Humanitarian/news",
+         below_p10 = suitability < p10)
+
+tab_all <- table(news = src_df$news, below_p10 = src_df$below_p10)
+print(tab_all)
+
+n_news      <- sum(src_df$news)
+n_other     <- sum(!src_df$news)
+k_news      <- sum(src_df$below_p10 & src_df$news)
+k_other     <- sum(src_df$below_p10 & !src_df$news)
+share_news  <- k_news / n_news
+share_other <- k_other / n_other
+
+ft_all <- fisher.test(tab_all)
+
+cat("\nBelow p10 — humanitarian/news:", k_news, "of", n_news,
+    "(", round(100 * share_news, 1), "% ) | all others:", k_other, "of", n_other,
+    "(", round(100 * share_other, 1), "% )\n")
+cat("Relative risk:", round(share_news / share_other, 1),
+    "| Fisher's exact p =", signif(ft_all$p.value, 2), "\n")
+
+# Same comparison against peer-reviewed records only
+pr_df <- src_df |> filter(source_type %in% c("Humanitarian/news", "Peer-reviewed"))
+ft_pr <- fisher.test(table(pr_df$news, pr_df$below_p10))
+cat("Against peer-reviewed only: Fisher's exact p =", signif(ft_pr$p.value, 2), "\n")
 
 # --------------------------------- Save -------------------------------------
 

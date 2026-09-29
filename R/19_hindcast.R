@@ -2,8 +2,7 @@
 # 19_hindcast.R
 # Projects the MaxEnt model onto 2005 covariates with 2005 WorldPop population
 # to compare against Alvar et al. (2006)'s expert-derived Gedaref ARP of
-# 0.98M — an entirely independent evidence stream from environmental niche
-# modelling.
+# 0.98M.
 #
 # Inputs:  outputs/models/maxent_final.rds
 #          outputs/models/selected_tuning.rds
