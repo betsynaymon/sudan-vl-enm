@@ -1,35 +1,56 @@
 # ============================================================================
-# 21_mask_sensitivity.R
-# "Maximally permissive" sensitivity check: full-country background (no
-# ecological mask) with all occurrence points retained (including Khartoum
-# referral records). Tests whether the ecological mask threshold and the
-# point-filtering decisions drive the reported suitability surface and ARP.
+# 21_ecological_mask_check.R
+# Ecological mask sensitivity. Tests whether the >= 150 mm ecological mask
+# drives the suitability surface and ARP. The mask does two things in the
+# primary pipeline: it limits where background points are drawn, and, because
+# covariates are masked before extraction, it drops presences outside it
+# (e.g. the Khartoum vector site, ID 121). This script removes the mask in
+# two steps so each effect can be seen separately:
 #
-# Design: same MaxEnt configuration (LQH, rm = 1.5), same spatial CV
-# structure (100 km blocks, k = 4), same evaluation metrics. Only the
-# background extent and presence set differ from the primary model.
+#   PRESENCE_SET = "primary"  Background drawn from all of Sudan; presences
+#                             are the primary model's 98 training records.
+#                             Isolates the effect of background extent.
+#   PRESENCE_SET = "all"      Background drawn from all of Sudan; presences
+#                             are every compiled record, thinned (5 km,
+#                             within-year), including the Khartoum referral
+#                             records and vector site excluded upstream.
+#                             Adds the effect of restoring dropped records.
 #
-# Inputs:  data/raw/compiled_vl_presences.csv
-#          data/raw/ (covariate rasters — static + year-specific)
-#          data/raw/gadm/ (cached GADM boundary via geodata)
+# Design: same MaxEnt configuration as the primary model (LQH, rm = 1.5),
+# same CV structure (100 km blocks, k = 4, random assignment; folds rebuilt
+# for the new point set), year-matched covariate extraction masked to the
+# Sudan boundary only (GADM rasterised with touches = TRUE so border
+# presences are retained). ARP is reported on the full surface and split
+# inside vs outside the ecological mask, with focus-state totals.
+#
+# Run once per presence set; each writes to its own output folder.
+#
+# Inputs:  data/raw/compiled_vl_presences.csv          ("all")
+#          data/processed/occurrences_thinned.csv
+#          outputs/models/training_data.rds             ("primary")
 #          outputs/models/retained_vars.rds
-#          outputs/surfaces/maxent_suitability.tif  (primary, for comparison)
-#          outputs/tables/arp_summary.csv            (primary, for comparison)
+#          outputs/surfaces/maxent_suitability.tif      (primary, comparison)
+#          outputs/tables/arp_summary.csv               (primary, comparison)
 #          outputs/surfaces/worldpop_2025_aligned.tif
-# Outputs: outputs/sensitivity/mask/suitability_no_mask.tif
-#          outputs/sensitivity/mask/arp_summary_no_mask.csv
-#          outputs/sensitivity/mask/arp_by_state_no_mask.csv
-#          outputs/sensitivity/mask/comparison_summary.csv
-#          outputs/sensitivity/mask/suitability_comparison.png
-#          outputs/sensitivity/mask/occurrences_thinned_no_mask.csv
-#          outputs/sensitivity/mask/maxent_no_mask.rds
-#          outputs/sensitivity/mask/spatial_cv_folds_no_mask.rds
-#          outputs/sensitivity/mask/training_data_no_mask.rds
-#          outputs/sensitivity/mask/background_points_no_mask.csv
-#          outputs/sensitivity/mask/cv_metrics_no_mask.csv
+#          data/raw/ecological_mask_150mm.tif
+#          data/raw/ (static and year-specific covariate rasters)
+#          data/raw/gadm/ (GADM boundaries via geodata)
+# Outputs: outputs/sensitivity/mask_{presence_set}/
+#            suitability_no_mask.tif
+#            arp_summary_no_mask.csv
+#            arp_by_state_no_mask.csv
+#            arp_mask_split.csv            (inside vs outside the mask)
+#            arp_focus_states.csv          (Khartoum, Red Sea, River Nile,
+#                                           Northern, Gedaref, Sennar)
+#            comparison_summary.csv
+#            suitability_comparison.png
+#            occurrences_thinned_no_mask.csv
+#            background_points_no_mask.csv
+#            training_data_no_mask.rds
+#            spatial_cv_folds_no_mask.rds
+#            maxent_no_mask.rds
+#            cv_metrics_no_mask.csv
 # ============================================================================
-
-source(here::here("R", "params.R"))
 
 suppressPackageStartupMessages({
   library(terra)
@@ -46,9 +67,15 @@ suppressPackageStartupMessages({
 
 set.seed(SEED)
 
-# Output directory
-DIR_SENS <- file.path(DIR_OUTPUTS, "sensitivity", "mask")
+# "primary" = the primary model's 98 training presences (isolates the
+#             effect of the full-country background)
+# "all"     = every compiled record, thinned (the original maximally
+#             permissive check)
+PRESENCE_SET <- "primary"
+
+DIR_SENS <- file.path(DIR_OUTPUTS, "sensitivity", paste0("mask_", PRESENCE_SET))
 dir.create(DIR_SENS, showWarnings = FALSE, recursive = TRUE)
+cat("Presence set:", PRESENCE_SET, "\n")
 
 cat("=" |> rep(70) |> paste(collapse = ""), "\n")
 cat("SENSITIVITY CHECK: full-country background, all presences\n")
@@ -68,7 +95,7 @@ names(covs) <- retained_vars
 
 # Create full-country mask from Sudan boundary:
 # rasterize GADM to the covariate grid, 1 = inside Sudan, NA = outside
-sudan_mask <- rasterize(adm0, covs[[1]], field = 1, background = NA)
+sudan_mask <- rasterize(adm0, covs[[1]], field = 1, background = NA, touches = TRUE)
 
 # Mask covariates to Sudan boundary (not ecological mask)
 covs_sudan <- mask(covs, sudan_mask)
@@ -79,46 +106,52 @@ cat("Full-country mask cells:",
 
 # ============================ 1. THINNING ====================================
 # Load ALL raw occurrences — no referral filtering
+if (PRESENCE_SET == "primary") {
+  train_p  <- readRDS(file.path(DIR_MODELS, "training_data.rds"))
+  occ_thin <- read.csv(here::here("data", "processed", "occurrences_thinned.csv"))
+  k_thin   <- paste(round(occ_thin$longitude, 5), round(occ_thin$latitude, 5), occ_thin$year)
+  k_train  <- paste(round(train_p$occ_clean$longitude, 5),
+                    round(train_p$occ_clean$latitude, 5), train_p$occ_clean$year)
+  occ_all  <- occ_thin[k_thin %in% k_train, ] |> mutate(year = as.integer(year))
+  cat("Using the primary model's", nrow(occ_all), "training presences\n")
+} else {
+    occ_raw <- read.csv(here::here("data", "raw", "compiled_vl_presences.csv"))
+    cat("Raw occurrence records:", nrow(occ_raw), "\n")
 
-occ_raw <- read.csv(here::here("data", "raw", "compiled_vl_presences.csv"))
-cat("Raw occurrence records:", nrow(occ_raw), "\n")
+    # Within-year spatial thinning at 5 km (identical to primary pipeline)
+    set.seed(SEED)
 
-# Within-year spatial thinning at 5 km (identical to primary pipeline)
-set.seed(SEED)
+    years <- unique(occ_raw$year)
 
-years <- unique(occ_raw$year)
+    thinned_by_year <- lapply(years, function(y) {
+    yr_data <- occ_raw %>% filter(year == y)
 
-thinned_by_year <- lapply(years, function(y) {
-  yr_data <- occ_raw %>% filter(year == y)
+    if (nrow(yr_data) < 2) return(yr_data)
 
-  if (nrow(yr_data) < 2) return(yr_data)
+    thin_input <- yr_data %>%
+      transmute(LAT = latitude, LONG = longitude, SPEC = "VL")
 
-  thin_input <- yr_data %>%
-    transmute(LAT = latitude, LONG = longitude, SPEC = "VL")
+    res <- thin(
+      loc.data   = thin_input,
+      lat.col    = "LAT",        long.col   = "LONG",
+      spec.col   = "SPEC",
+      thin.par   = THIN_KM,
+      reps       = 100,        locs.thinned.list.return = TRUE,
+      write.files = FALSE, write.log.file = FALSE, verbose = FALSE
+      )
 
-  res <- thin(
-    loc.data   = thin_input,
-    lat.col    = "LAT",
-    long.col   = "LONG",
-    spec.col   = "SPEC",
-    thin.par   = THIN_KM,
-    reps       = 100,
-    locs.thinned.list.return = TRUE,
-    write.files = FALSE, write.log.file = FALSE, verbose = FALSE
-  )
+      best <- res[[which.max(sapply(res, nrow))]]
 
-  best <- res[[which.max(sapply(res, nrow))]]
+      best_keys <- paste(round(best$Longitude, 5), round(best$Latitude, 5))
+      yr_data %>%
+        filter(paste(round(longitude, 5), round(latitude, 5)) %in% best_keys)
+    })
 
-  best_keys <- paste(round(best$Longitude, 5), round(best$Latitude, 5))
-  yr_data %>%
-    filter(paste(round(longitude, 5), round(latitude, 5)) %in% best_keys)
-})
+    occ_all <- bind_rows(thinned_by_year) %>%
+      mutate(year = as.integer(year))
 
-occ_all <- bind_rows(thinned_by_year) %>%
-  mutate(year = as.integer(year))
-
-cat("After within-year thinning:", nrow(occ_all), "records\n")
-cat("Unique locations:", occ_all %>% distinct(longitude, latitude) %>% nrow(), "\n")
+    cat("After within-year thinning:", nrow(occ_all), "records\n")
+    cat("Unique locations:", occ_all %>% distinct(longitude, latitude) %>% nrow(), "\n")}
 
 # Compare with primary (which excluded referral IDs)
 occ_primary <- read.csv(here::here("data", "processed", "occurrences_thinned.csv"))
@@ -380,6 +413,41 @@ cat("\n--- Sensitivity ARP ---\n")
 cat("p10:          ", format(round(arp_p10_s), big.mark = ","), "\n")
 cat("maxSSS:       ", format(round(arp_maxsss_s), big.mark = ","), "\n")
 cat("Risk-weighted:", format(round(arp_weighted_s), big.mark = ","), "\n\n")
+
+# ---------- Inside vs outside the ecological mask ---
+
+eco_r        <- rast(file.path(DIR_COVARIATES, "ecological_mask_150mm.tif"))
+primary_suit <- rast(file.path(DIR_SURFACES, "maxent_suitability.tif"))
+
+split_arp <- function(suit) {
+  total  <- global(pop_aligned * suit, "sum", na.rm = TRUE)[[1]]
+  inside <- global(pop_aligned * mask(suit, eco_r, maskvalues = 0),
+                   "sum", na.rm = TRUE)[[1]]
+  c(total = total, inside_mask = inside, outside_mask = total - inside)
+}
+
+mask_split <- rbind(primary     = split_arp(primary_suit),
+                    sensitivity = split_arp(sens_suit))
+cat("\nRisk-weighted ARP inside vs outside the ecological mask:\n")
+print(format(round(mask_split), big.mark = ","), quote = FALSE)
+
+focus_states <- c("Khartoum", "Red Sea", "River Nile", "Northern",
+                  "Al Qadarif", "Sennar")
+state_split <- data.frame(
+  state       = adm1$NAME_1,
+  primary     = terra::extract(pop_aligned * primary_suit, adm1,
+                               fun = "sum", na.rm = TRUE, ID = FALSE)[[1]],
+  sensitivity = terra::extract(pop_aligned * sens_suit, adm1,
+                               fun = "sum", na.rm = TRUE, ID = FALSE)[[1]]
+) |>
+  filter(state %in% focus_states)
+
+cat("\nFocus states, risk-weighted ARP:\n")
+print(state_split |> mutate(across(-state, ~ format(round(.), big.mark = ","))),
+      row.names = FALSE)
+
+write.csv(as.data.frame(mask_split), file.path(DIR_SENS, "arp_mask_split.csv"))
+write.csv(state_split, file.path(DIR_SENS, "arp_focus_states.csv"), row.names = FALSE)
 
 # State-level breakdown
 risk_weighted_r <- pop_aligned * sens_suit
