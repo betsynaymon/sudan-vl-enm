@@ -21,8 +21,14 @@ suppressPackageStartupMessages({
 })
 
 # ----- Threshold -----
-# Background median travel time from 11_accessibility_bias_diagnostic.R
-TT_THRESHOLD <- 324  # minutes
+# Median travel time at the primary model's background points
+# (the same quantity reported by 11_accessibility_bias_diagnostic.R)
+train <- readRDS(file.path(DIR_MODELS, "training_data.rds"))
+tt_raw_bg <- rast(here::here("data", "raw", "weiss_travel_time.tif"))
+tt_bg <- terra::extract(tt_raw_bg,
+                        as.matrix(train$bg_clean[, c("longitude", "latitude")]))[, 1]
+TT_THRESHOLD <- median(tt_bg, na.rm = TRUE)
+cat("Threshold (background median travel time):", round(TT_THRESHOLD), "min\n")
 
 # ----- Load inputs -----
 
