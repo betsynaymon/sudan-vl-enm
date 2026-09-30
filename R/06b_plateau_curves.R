@@ -5,8 +5,10 @@
 # plausibility (params.R). Candidates are refitted on all data with the same
 # settings as 06.
 #
-# Inputs:  TRAIN_FILE, TUNING_FILE, retained_vars.rds, enmeval_results.csv
-# Outputs: outputs/figures/plateau_response_curves.png
+# Inputs:  TRAIN_FILE, TUNING_FILE, retained_vars.rds, enmeval_results.csv,
+#          DOMAIN_FILE, COV_FILES
+# Outputs: CANDIDATES_FILE
+#          outputs/figures/plateau_response_curves.png
 #          outputs/figures/plateau_rain_lst_surface.png
 # ============================================================================
 
@@ -36,7 +38,8 @@ env_all <- rbind(occ_env, bg_env)
 stopifnot("TUNING_FILE has no plateau: rerun 06" = !is.null(tuning$plateau))
 ends <- tuning$plateau |> filter(fc == tuning$fc) |>
   slice(c(which.min(rm), which.max(rm))) |> select(fc, rm)
-candidates <- bind_rows(ends, data.frame(fc = "LQH", rm = min(ends$rm))) |> distinct()
+candidates <- bind_rows(ends, data.frame(fc = PLATEAU_REF_FC, rm = min(ends$rm))) |> distinct()
+end_names  <- paste0(ends$fc, " rm ", ends$rm)
 
 res <- read.csv(file.path(DIR_TABLES, "enmeval_results.csv"))
 cat("Candidates, cross-validated:\n")
@@ -60,20 +63,10 @@ for (nm in names(mods)) {
 ref <- sapply(occ_env, median)
 cat("\nReference (presence median):\n"); print(signif(ref, 3))
 
-ref_frame <- function(n) as.data.frame(matrix(rep(ref, each = n), ncol = length(ref),
-                                              dimnames = list(NULL, names(ref))))
-
 # --------------------------- Response curves --------------------------------
 
-curve_df <- bind_rows(lapply(names(mods), function(nm) {
-  bind_rows(lapply(retained_vars, function(v) {
-    x  <- if (v == "vertisols") c(0, 1) else
-      seq(min(env_all[[v]]), max(env_all[[v]]), length.out = 200)
-    nd <- ref_frame(length(x)); nd[[v]] <- x
-    data.frame(model = nm, variable = v, value = x,
-               suit = as.numeric(predict(mods[[nm]], nd, type = "cloglog", clamp = TRUE)))
-  }))
-}))
+curve_df <- bind_rows(lapply(names(mods), function(nm)
+  data.frame(model = nm, response_curves(mods[[nm]], ref, env_all, retained_vars))))
 
 cat("\nVertisols (suitability off vs on clay):\n")
 curve_df |> filter(variable == "vertisols") |>
@@ -101,16 +94,8 @@ ggsave(file.path(DIR_FIGS, "plateau_response_curves.png"), p_curves,
        width = 10, height = 6, dpi = 300)
 
 # --------------------- Rainfall x night temperature -------------------------
-
-grid <- expand.grid(
-  rainfall  = seq(min(env_all$rainfall),  max(env_all$rainfall),  length.out = 100),
-  lst_night = seq(min(env_all$lst_night), max(env_all$lst_night), length.out = 100))
-
-surf_df <- bind_rows(lapply(names(mods), function(nm) {
-  nd <- ref_frame(nrow(grid)); nd$rainfall <- grid$rainfall; nd$lst_night <- grid$lst_night
-  cbind(grid, model = nm,
-        suit = as.numeric(predict(mods[[nm]], nd, type = "cloglog", clamp = TRUE)))
-}))
+surf_df <- bind_rows(lapply(names(mods), function(nm)
+  data.frame(model = nm, pair_surface(mods[[nm]], ref, env_all, "rainfall", "lst_night"))))
 
 p_surf <- ggplot(surf_df, aes(rainfall, lst_night, fill = suit)) +
   geom_raster() +
@@ -131,27 +116,24 @@ ggsave(file.path(DIR_FIGS, "plateau_rain_lst_surface.png"), p_surf,
 # ------------------ Candidates on the prediction surface --------------------
 # Do the candidates differ where it matters: across Sudan's long-term surface?
 
-dom  <- rast(DOMAIN_FILE)
-covs <- rast(file.path(DIR_COVARIATES, COV_FILES[retained_vars]))
-names(covs) <- retained_vars
-covs <- mask(covs, dom, maskvalues = 0)
+covs <- domain_covs(retained_vars)
 cat("\nLong-term range across the domain:\n")
 print(global(covs[[c("rainfall", "lst_night")]], c("min", "max"), na.rm = TRUE))
 
-surf <- do.call(c, lapply(mods, function(m)
-  terra::predict(covs, m, type = "cloglog", na.rm = TRUE)))
+surf <- do.call(c, unname(lapply(mods, function(m)
+  terra::predict(covs, m, type = "cloglog", na.rm = TRUE))))
 names(surf) <- names(mods)
-writeRaster(surf, file.path(DIR_SURFACES, "plateau_candidate_surfaces.tif"), overwrite = TRUE)
+writeRaster(surf, CANDIDATES_FILE, overwrite = TRUE)
 
 v <- values(surf)
 cat("\nMean suitability across the domain:\n"); print(round(colMeans(v, na.rm = TRUE), 3))
 cat("\nCorrelation between candidate surfaces:\n"); print(round(cor(v, use = "complete.obs"), 3))
 
-d48 <- v[, "LQHP rm 4"] - v[, "LQHP rm 8"]
-cat("\nLQHP rm 4 minus rm 8 (1st / 50th / 99th percentiles):\n")
-print(round(quantile(d48, c(0.01, 0.5, 0.99), na.rm = TRUE), 3))
+d_ends <- v[, end_names[1]] - v[, end_names[2]]
+cat("\n", end_names[1], " minus ", end_names[2], " (1st / 50th / 99th percentiles):\n", sep = "")
+print(round(quantile(d_ends, c(0.01, 0.5, 0.99), na.rm = TRUE), 3))
 
-big <- which(abs(d48) >= quantile(abs(d48), 0.99, na.rm = TRUE))
+big <- which(abs(d_ends) >= quantile(abs(d_ends), 0.99, na.rm = TRUE))
 cat("\nCovariates where the difference is largest (top 1%):\n")
 print(summary(values(covs)[big, c("rainfall", "lst_night")]))
 

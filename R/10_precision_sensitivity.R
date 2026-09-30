@@ -1,267 +1,205 @@
 # ============================================================================
 # 10_precision_sensitivity.R
-# Drops the 8 occurrence records with >4 km positional uncertainty (van de
-# Bogaart 2013, Hassan 2020), refits MaxEnt on the high-precision subset,
-# and compares the suitability surface and ARP to the full-data model.
+# Does the population at risk rest on the weakest records? Refits the selected
+# model without each set of questionable presences (background, folds and
+# configuration unchanged) and compares fit, surface and population at risk
+# with the primary model, nationally and by state.
+#   precision:      map-digitised records with positional error > 4 km
+#   facility:       records locating a treatment facility, not a site
+#   khartoum:       Khartoum case records
+#   central_cities: Khartoum and Wad Madani case records
+#   id_121:         ID 121 alone (in the precision set; the only dry-riverine
+#                   presence), to separate its effect from positional error
+# The primary model runs through the same code and must reproduce 06-08.
 #
-# Inputs:  outputs/models/training_data.rds
-#          outputs/models/spatial_cv_folds.rds
-#          outputs/models/retained_vars.rds
-#          outputs/surfaces/maxent_suitability.tif
-#          outputs/surfaces/worldpop_2025_aligned.tif
-#          outputs/tables/arp_summary.csv
-#          data/processed/occurrences_thinned.csv
-# Outputs: outputs/models/maxent_precision_subset.rds
-#          outputs/surfaces/maxent_suitability_precision_subset.tif
-#          outputs/tables/precision_sensitivity.csv
+# Inputs:  TRAIN_FILE, TUNING_FILE, MODEL_FILE, SUIT_FILE, POP_ALIGNED_FILE,
+#          DOMAIN_FILE, ADM1_FILE, SENS_MASK_FILE, retained_vars.rds,
+#          outputs/tables/arp_summary.csv, arp_plateau_candidates.csv (08)
+# Outputs: outputs/surfaces/data_quality_refit_surfaces.tif
+#          outputs/tables/data_quality_refits.csv
+#          outputs/tables/data_quality_refits_by_state.csv
 # ============================================================================
 
 source(here::here("R", "params.R"))
+source(here::here("R", "helpers.R"))
 
 suppressPackageStartupMessages({
-  library(terra)
-  library(sf)
-  library(dplyr)
-  library(maxnet)
-  library(ecospat)
-  library(ggplot2)
+  library(terra); library(dplyr); library(maxnet)
 })
 
 # ------------------------------ Load inputs ---------------------------------
 
-train   <- readRDS(file.path(DIR_MODELS, "training_data.rds"))
-folds   <- readRDS(file.path(DIR_MODELS, "spatial_cv_folds.rds"))
-suit_mx <- rast(file.path(DIR_SURFACES, "maxent_suitability.tif"))
-vars    <- readRDS(file.path(DIR_MODELS, "retained_vars.rds"))
-tuning  <- readRDS(file.path(DIR_MODELS, "selected_tuning.rds"))
+train  <- readRDS(TRAIN_FILE)
+tuning <- readRDS(TUNING_FILE)
+mod    <- readRDS(MODEL_FILE)
+suit_r <- rast(SUIT_FILE)
+pop    <- rast(POP_ALIGNED_FILE)
+vars   <- readRDS(file.path(DIR_MODELS, "retained_vars.rds"))
+arp_08 <- read.csv(file.path(DIR_TABLES, "arp_summary.csv"))
+cand   <- read.csv(file.path(DIR_TABLES, "arp_plateau_candidates.csv"))
 
-best_classes <- tolower(tuning$fc)
-cat("Tuning:", tuning$fc, "rm =", tuning$rm, "\n")
+occ <- train$occ_clean
+bg  <- train$bg_clean
+stopifnot(
+  "Presence rows and values differ"          = nrow(occ) == nrow(train$occ_env),
+  "Background rows and values differ"        = nrow(bg)  == nrow(train$bg_env),
+  "Population grid differs from the surface" = compareGeom(pop, suit_r, stopOnError = FALSE),
+  "Belt mask grid differs from the surface" = compareGeom(rast(SENS_MASK_FILE), suit_r, stopOnError = FALSE)
+)
+cat("Model:", tuning$fc, "rm =", tuning$rm, "| presences:", nrow(occ),
+    "| background:", nrow(bg), "\n")
 
-# ----------------------- Subset presences -----------------------------------
+zones <- state_zones(suit_r)
+occ$state_zone <- as.character(
+  terra::extract(zones, as.matrix(occ[, c("longitude", "latitude")]))[, 1])
 
-drop_sources <- c("vandebogaart_et_al_2013_fig1",
-                  "vandebogaart_et_al_2013_fig2",
-                  "vandebogaart_et_al_2013_fig3",
-                  "vandebogaart_et_al_2013_fig4",
-                  "vandebogaart_et_al_2013_fig5",
-                  "hassan_et_al_2020_fig1",
-                  "hassan_et_al_2020_fig2",
-                  "hassan_et_al_2020_fig3")
+# ------------------------------ Refit sets ----------------------------------
+# Sets of coordinate_id, selected by ID. "primary" drops
+# nothing and must reproduce 06-08.
 
-drop_idx <- which(train$occ_clean$source %in% drop_sources)
-
-cat("Dropping", length(drop_idx), "map-digitised points (>4 km accuracy)\n")
-cat("Full model:", nrow(train$occ_env), "presences\n")
-
-occ_env_sub   <- train$occ_env[-drop_idx, ]
-occ_clean_sub <- train$occ_clean[-drop_idx, ]
-
-cat("Precision subset:", nrow(occ_env_sub), "presences\n")
-
-# ---------------------- Fold alignment --------------------------------------
-# Build fold vector: start from full folds_ids (10,099), drop the row that
-# MaxEnt's cell×year dedup removed, then drop the 8 precision rows.
-
-occ_orig   <- read.csv(here::here("data", "processed", "occurrences_thinned.csv"))
-occ_keys   <- paste(round(occ_orig$longitude, 5), round(occ_orig$latitude, 5), occ_orig$year)
-train_keys <- paste(round(train$occ_clean$longitude, 5), round(train$occ_clean$latitude, 5), train$occ_clean$year)
-dedup_idx  <- which(!occ_keys %in% train_keys)
-
-# Remove dedup row from fold vector → length 10,098 (98 pres + 10,000 bg)
-fold_ids <- folds$folds_ids[-(dedup_idx)]
-
-# Now drop the 8 precision rows from the presence portion
-fold_ids_sub <- fold_ids[-(drop_idx)]
-
-# Combine subset presences + full background
-df_sub <- bind_rows(
-  bind_cols(occ_env_sub, occ_clean_sub[, c("longitude", "latitude")]) |>
-    mutate(pa = 1),
-  bind_cols(train$bg_env, train$bg_clean[, c("longitude", "latitude")]) |>
-    mutate(pa = 0)
+drop_sets <- list(
+  primary        = integer(0),
+  precision      = occ$coordinate_id[occ$source %in% IMPRECISE_SOURCES],
+  facility       = occ$coordinate_id[occ$presence_type == FACILITY_TYPE],
+  khartoum       = KHARTOUM_CASE_IDS,
+  central_cities = c(KHARTOUM_CASE_IDS, CENTRAL_CITY_CASE_IDS),
+  id_121         = KHARTOUM_VECTOR_ID
 )
 
 stopifnot(
-  "Fold vector length doesn't match subset data" =
-    length(fold_ids_sub) == nrow(df_sub)
+  "A named ID is not a training presence" =
+    all(c(KHARTOUM_CASE_IDS, CENTRAL_CITY_CASE_IDS, KHARTOUM_VECTOR_ID) %in% occ$coordinate_id),
+  "An imprecise source matches no training presence" = all(IMPRECISE_SOURCES %in% occ$source),
+  "No facility records"                = length(drop_sets$facility) > 0,
+  "ID 121 is not in the precision set" = KHARTOUM_VECTOR_ID %in% drop_sets$precision
 )
 
-df_sub$fold <- fold_ids_sub
+for (s in names(drop_sets)[-1]) {
+  cat("\n", s, ": ", length(drop_sets[[s]]), " record(s)\n", sep = "")
+  occ |> filter(coordinate_id %in% drop_sets[[s]]) |>
+    select(coordinate_id, source, presence_type, georef_method, year, state_zone, fold) |>
+    print(row.names = FALSE)
+}
+cat("\nIn both the precision and facility sets:",
+    length(intersect(drop_sets$precision, drop_sets$facility)), "\n")
 
-cat("Combined:", nrow(df_sub), "rows (",
-    sum(df_sub$pa == 1), "pres,", sum(df_sub$pa == 0), "bg)\n")
-cat("NA folds:", sum(is.na(df_sub$fold)), "\n")
-cat("Presences per fold:\n")
-print(table(df_sub$fold[df_sub$pa == 1]))
+pres_left <- sapply(drop_sets, function(ids)
+  table(factor(occ$fold[!occ$coordinate_id %in% ids], levels = seq_len(K_FOLDS))))
+cat("\nTest presences per fold after each drop (floor ", MIN_TEST_PRES, "):\n", sep = "")
+print(pres_left)
 
-# ------------------------ Refit MaxEnt --------------------------------------
+# --------------------------- Refit and score --------------------------------
+# Background, folds (each row's own) and configuration unchanged; predicted
+# as in 07.
 
-p_sub <- as.matrix(occ_env_sub[, vars])
-b_sub <- as.matrix(train$bg_env[, vars])
+covs_dom <- domain_covs(vars)
 
-mod_sub <- maxnet(
-  p    = c(rep(1, nrow(p_sub)), rep(0, nrow(b_sub))),
-  data = as.data.frame(rbind(p_sub, b_sub)),
-  f    = maxnet.formula(
-    p    = c(rep(1, nrow(p_sub)), rep(0, nrow(b_sub))),
-    data = as.data.frame(rbind(p_sub, b_sub)),
-    classes = best_classes
-  ),
-  regmult = tuning$rm
+refits <- setNames(lapply(names(drop_sets), function(s) {
+  keep <- !occ$coordinate_id %in% drop_sets[[s]]
+  r <- refit_maxnet(train$occ_env[keep, vars], train$bg_env[, vars],
+                    occ$fold[keep], bg$fold, tuning$fc, tuning$rm)
+  r$surf <- terra::predict(covs_dom, r$mod, type = "cloglog", na.rm = TRUE)
+  r$arp  <- arp_estimates(r$surf, pop, r$thr)
+  r$n    <- sum(keep)
+  cat("  ", s, ": ", r$n, " presences\n", sep = "")
+  r
+}), names(drop_sets))
+
+# ------------------------ Primary reproduces 06-08 --------------------------
+# If this stops, the refit code differs from 06-08 and nothing below is
+# comparable.
+
+p       <- refits$primary
+thr_08  <- setNames(arp_08$threshold, arp_08$metric)
+arp_08v <- setNames(arp_08$arp,       arp_08$metric)
+stopifnot(
+  "Coefficients differ from MODEL_FILE (06)" = isTRUE(all.equal(p$mod$betas, mod$betas)),
+  "CV CBI differs from 06"                   = abs(mean(p$cv$cbi) - tuning$cbi) < 1e-8,
+  "Surface differs from SUIT_FILE (07)" =
+    global(abs(p$surf - suit_r), "max", na.rm = TRUE)[[1]] < 1e-6 &&
+    global(is.na(p$surf) != is.na(suit_r), "sum")[[1]] == 0,
+  "Thresholds differ from arp_summary.csv (08)" = all(abs(p$thr - thr_08[names(p$thr)]) < 1e-6),
+  "Estimates differ from arp_summary.csv (08)" =
+    all(round(arp_estimates(suit_r, pop, p$thr)) == arp_08v[names(p$arp)])
 )
+cat("\nPrimary reproduces 06 (coefficients, CV CBI), 07 (surface), 08 (thresholds, estimates)\n")
 
-cat("Refit model: ", sum(mod_sub$betas != 0), "non-zero /",
-    length(mod_sub$betas), "total coefficients\n")
+# ------------------------------ Comparison ----------------------------------
+# Rules fixed before the refits were run: a fold's CBI counts only with at
+# least MIN_TEST_PRES test presences; CBI changes are read against the
+# primary's SE; national changes against the plateau spread from 08 (other
+# candidates with the selected feature classes), the model-choice
+# uncertainty already reported.
 
-# ---------------------- Spatial CV evaluation --------------------------------
+se_cbi  <- sd(p$cv$cbi) / sqrt(K_FOLDS)
+plateau <- max(abs(cand$change_vs_selected[startsWith(cand$candidate, paste0(tuning$fc, " "))]))
+v_prim  <- values(p$surf, mat = FALSE)
+belt    <- values(rast(SENS_MASK_FILE), mat = FALSE) %in% 1
 
-fold_cbi <- fold_auc <- numeric(4)
+summary_df <- bind_rows(lapply(names(refits), function(s) {
+  r  <- refits[[s]]
+  u  <- r$cv$n_test_pres >= MIN_TEST_PRES
+  v  <- values(r$surf, mat = FALSE)
+  ok <- !is.na(v) & !is.na(v_prim)
+  data.frame(
+    refit = s, n_dropped = nrow(occ) - r$n, n_presences = r$n,
+    n_coef = length(r$mod$betas), folds_scored = sum(u),
+    cbi = mean(r$cv$cbi[u], na.rm = TRUE), cbi_sd = sd(r$cv$cbi[u], na.rm = TRUE),
+    auc = mean(r$cv$auc[u]),
+    rho_domain = cor(v[ok], v_prim[ok], method = "spearman"),
+    rho_belt   = cor(v[ok & belt], v_prim[ok & belt], method = "spearman"),
+    p10 = r$thr[["p10"]], maxsss = r$thr[["maxsss"]],
+    arp_weighted = r$arp[["risk_weighted"]],
+    arp_maxsss = r$arp[["maxsss"]], arp_p10 = r$arp[["p10"]])
+})) |>
+  mutate(rw_change_pct  = 100 * (arp_weighted / arp_weighted[refit == "primary"] - 1),
+         cbi_change     = cbi - cbi[refit == "primary"],
+         beyond_plateau = abs(rw_change_pct) > plateau)
 
-for (k in 1:4) {
-  idx_train <- df_sub$fold != k
-  idx_test  <- df_sub$fold == k
+cat("\nFit and surface | primary CBI SE:", round(se_cbi, 3), "\n")
+summary_df |>
+  select(refit, n_dropped, folds_scored, cbi, cbi_change, cbi_sd, auc, n_coef,
+         rho_domain, rho_belt) |>
+  mutate(across(where(is.double), ~ round(., 3))) |> print(row.names = FALSE)
 
-  p_tr <- as.matrix(df_sub[idx_train & df_sub$pa == 1, vars])
-  b_tr <- as.matrix(df_sub[idx_train & df_sub$pa == 0, vars])
+cat("\nCBI by fold (NA below the floor):\n")
+print(sapply(refits, function(r)
+  round(ifelse(r$cv$n_test_pres >= MIN_TEST_PRES, r$cv$cbi, NA), 3)))
 
-  mod_k <- maxnet(
-    p    = c(rep(1, nrow(p_tr)), rep(0, nrow(b_tr))),
-    data = as.data.frame(rbind(p_tr, b_tr)),
-    f    = maxnet.formula(
-      p    = c(rep(1, nrow(p_tr)), rep(0, nrow(b_tr))),
-      data = as.data.frame(rbind(p_tr, b_tr)),
-      classes = best_classes
-    ),
-    regmult = tuning$rm
-  )
+cat("\nPopulation at risk, own thresholds | plateau spread: +/-", round(plateau, 1), "%\n")
+summary_df |>
+  select(refit, arp_weighted, rw_change_pct, beyond_plateau, arp_maxsss, maxsss, arp_p10, p10) |>
+  mutate(across(starts_with("arp"), fmt), rw_change_pct = round(rw_change_pct, 1),
+         across(c(maxsss, p10), ~ round(., 3))) |>
+  print(row.names = FALSE)
 
-  test_data <- df_sub[idx_test, vars]
-  pred_test <- predict(mod_k, newdata = test_data, type = "cloglog")[, 1]
+# -------------------------------- States ------------------------------------
 
-  pres_pred <- pred_test[df_sub$pa[idx_test] == 1]
-  bg_pred   <- pred_test[df_sub$pa[idx_test] == 0]
+surf_all <- do.call(c, unname(lapply(refits, `[[`, "surf")))
+names(surf_all) <- names(refits)
+rw_all <- pop * surf_all
+names(rw_all) <- names(refits)
 
-  boyce <- ecospat.boyce(fit = pred_test, obs = pres_pred,
-                         nclass = 0, PEplot = FALSE)
-  fold_cbi[k] <- boyce$cor
+state_df <- zonal(rw_all, zones, fun = "sum", na.rm = TRUE)
+names(state_df)[1] <- "state"
+stopifnot("States do not sum to the national estimates" =
+  all(abs(colSums(state_df[names(refits)]) / summary_df$arp_weighted - 1) < POP_TOL))
 
-  n1 <- length(pres_pred)
-  n0 <- length(bg_pred)
-  fold_auc[k] <- (sum(rank(c(pres_pred, bg_pred))[1:n1]) - n1 * (n1 + 1) / 2) / (n1 * n0)
-}
+state_df <- state_df |>
+  mutate(n_presences = as.integer(table(factor(occ$state_zone, levels = state))),
+         across(all_of(names(refits)[-1]), ~ round(100 * (. / primary - 1), 1),
+                .names = "{.col}_pct")) |>
+  arrange(desc(primary))
 
-cat("\nSpatial CV — precision subset:\n")
-cat("CBI:", round(mean(fold_cbi, na.rm = TRUE), 3),
-    "\u00b1", round(sd(fold_cbi, na.rm = TRUE), 3), "\n")
-cat("AUC:", round(mean(fold_auc), 3),
-    "\u00b1", round(sd(fold_auc), 3), "\n")
-
-# ---------------------- Predict and compare ---------------------------------
-
-suit_sub_path <- file.path(DIR_SURFACES, "maxent_suitability_precision_subset.tif")
-
-if (file.exists(suit_sub_path)) {
-  cat("Loading cached precision subset surface\n")
-  suit_sub <- rast(suit_sub_path)
-} else {
-  cov_stack <- rast(file.path(DIR_COVARIATES, COV_FILES[vars]))
-  names(cov_stack) <- vars
-
-  suit_sub <- predict(cov_stack, mod_sub, type = "cloglog",
-                      clamp = TRUE, na.rm = TRUE)
-
-  writeRaster(suit_sub, suit_sub_path, overwrite = TRUE)
-  cat("Computed and saved precision subset surface\n")
-}
-
-# Surface correlation
-set.seed(SEED)
-valid_cells <- which(!is.na(values(suit_mx)) & !is.na(values(suit_sub)))
-samp_idx <- sample(valid_cells, min(50000, length(valid_cells)))
-r_pearson <- round(cor(values(suit_mx)[samp_idx],
-                       values(suit_sub)[samp_idx]), 3)
-
-cat("\nSurface correlation (50k sample): Pearson =", r_pearson, "\n")
-
-# ----------------------- ARP comparison -------------------------------------
-
-pop_aligned <- rast(file.path(DIR_SURFACES, "worldpop_2025_aligned.tif"))
-total_pop   <- global(pop_aligned, "sum", na.rm = TRUE)[[1]]
-
-# Subset thresholds
-pred_occ_sub <- predict(mod_sub, newdata = occ_env_sub[, vars],
-                        type = "cloglog")[, 1]
-pred_bg_sub  <- predict(mod_sub, newdata = train$bg_env[, vars],
-                        type = "cloglog")[, 1]
-
-sub_p10 <- unname(quantile(pred_occ_sub, 0.10))
-
-candidates <- sort(unique(c(pred_occ_sub, pred_bg_sub)))
-sens <- sapply(candidates, function(t) mean(pred_occ_sub >= t))
-spec <- sapply(candidates, function(t) mean(pred_bg_sub < t))
-sub_maxsss <- candidates[which.max(sens + spec)]
-
-cat("Subset p10:   ", round(sub_p10, 4), "\n")
-cat("Subset maxSSS:", round(sub_maxsss, 4), "\n")
-
-# ARP estimates
-sub_arp_p10      <- global(pop_aligned * (suit_sub >= sub_p10), "sum", na.rm = TRUE)[[1]]
-sub_arp_maxsss   <- global(pop_aligned * (suit_sub >= sub_maxsss), "sum", na.rm = TRUE)[[1]]
-sub_arp_weighted <- global(pop_aligned * suit_sub, "sum", na.rm = TRUE)[[1]]
-
-# Load full-model ARP for comparison
-mx_arp       <- read.csv(file.path(DIR_TABLES, "arp_summary.csv"))
-full_weighted <- mx_arp$arp[mx_arp$metric == "risk_weighted"]
-full_maxsss   <- mx_arp$arp[mx_arp$metric == "maxSSS"]
-full_p10      <- mx_arp$arp[mx_arp$metric == "p10"]
-
-cat("\n--- ARP comparison ---\n")
-cat(sprintf("%-20s %14s %14s\n", "", "Full (n=98)", "Subset (n=90)"))
-cat(sprintf("%-20s %14s %14s\n", "Risk-weighted",
-    format(round(full_weighted), big.mark = ","),
-    format(round(sub_arp_weighted), big.mark = ",")))
-cat(sprintf("%-20s %14s %14s\n", "maxSSS binary",
-    format(round(full_maxsss), big.mark = ","),
-    format(round(sub_arp_maxsss), big.mark = ",")))
-cat(sprintf("%-20s %14s %14s\n", "p10 binary",
-    format(round(full_p10), big.mark = ","),
-    format(round(sub_arp_p10), big.mark = ",")))
-
-pct_shift <- round(100 * abs(sub_arp_weighted - full_weighted) / full_weighted, 1)
-cat("Risk-weighted ARP shift:", pct_shift, "%\n")
+cat("\nRisk-weighted estimate by state (primary; % change under each refit):\n")
+state_df |> select(state, n_presences, primary, ends_with("_pct")) |>
+  mutate(primary = fmt(primary)) |> print(right = FALSE, row.names = FALSE)
 
 # --------------------------------- Save -------------------------------------
 
-saveRDS(mod_sub, file.path(DIR_MODELS, "maxent_precision_subset.rds"))
+writeRaster(surf_all, file.path(DIR_SURFACES, "data_quality_refit_surfaces.tif"),
+            overwrite = TRUE)
+write.csv(summary_df, file.path(DIR_TABLES, "data_quality_refits.csv"), row.names = FALSE)
+write.csv(state_df,   file.path(DIR_TABLES, "data_quality_refits_by_state.csv"), row.names = FALSE)
+cat("10_precision_sensitivity.R complete\n")
 
-precision_summary <- data.frame(
-  metric     = c("Presences", "Coefficients", "CBI (spatial CV)", "AUC (spatial CV)",
-                  "Mean suitability", "ARP risk-weighted", "ARP maxSSS binary",
-                  "ARP p10 binary", "p10 threshold", "maxSSS threshold",
-                  "Surface correlation (Pearson)"),
-  full_model = c(98, 13,
-                 0.873, 0.849,
-                 round(global(suit_mx, "mean", na.rm = TRUE)[[1]], 4),
-                 round(full_weighted), round(full_maxsss), round(full_p10),
-                 round(mx_arp$threshold[mx_arp$metric == "p10"], 4),
-                 round(mx_arp$threshold[mx_arp$metric == "maxSSS"], 4),
-                 NA),
-  subset     = c(90, sum(mod_sub$betas != 0),
-                 round(mean(fold_cbi, na.rm = TRUE), 3),
-                 round(mean(fold_auc), 3),
-                 round(global(suit_sub, "mean", na.rm = TRUE)[[1]], 4),
-                 round(sub_arp_weighted), round(sub_arp_maxsss), round(sub_arp_p10),
-                 round(sub_p10, 4), round(sub_maxsss, 4),
-                 r_pearson)
-)
-
-write.csv(precision_summary, file.path(DIR_TABLES, "precision_sensitivity.csv"),
-          row.names = FALSE)
-
-cat("\nSaved:\n")
-cat("  ", file.path(DIR_MODELS, "maxent_precision_subset.rds"), "\n")
-cat("  ", suit_sub_path, "\n")
-cat("  ", file.path(DIR_TABLES, "precision_sensitivity.csv"), "\n")
-
-cat("\n10_precision_sensitivity.R complete\n")

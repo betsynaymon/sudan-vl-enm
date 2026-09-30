@@ -1,79 +1,61 @@
 # ============================================================================
 # 08_pop_estimate.R
-# Converts the continuous suitability surface to binary predictions at two
-# thresholds (p10, maxSSS), downloads and aligns WorldPop 2025 population,
-# and computes at-risk population estimates at national and state level.
+# Population at risk from the selected model's surface (07): risk-weighted
+# (population x suitability; the primary estimate, an index rather than a
+# count) and binary at p10 and maxSSS, nationally and by state, with
+# diagnostics on where the estimate rests and how much it depends on the
+# plateau choice.
 #
-# The risk-weighted estimate (suitability × population, no threshold) is
-# the primary metric. Binary thresholds are reported for comparison and
-# to demonstrate threshold sensitivity.
-#
-# Inputs:  outputs/models/maxent_final.rds
-#          outputs/models/selected_tuning.rds
-#          outputs/models/training_data.rds
-#          outputs/surfaces/maxent_suitability.tif
-# Outputs: outputs/surfaces/binary_p10.tif
-#          outputs/surfaces/binary_maxsss.tif
-#          outputs/surfaces/worldpop_2025_aligned.tif
-#          outputs/tables/arp_summary.csv
-#          outputs/tables/arp_by_state.csv
-#          outputs/figures/threshold_sensitivity_curve.png
-#          outputs/figures/threshold_sensitivity_curve.pdf
-#          outputs/tables/arp_by_state_diagnostics.csv
-#          outputs/tables/mess_limiting_variable_by_state.csv
+# Inputs:  MODEL_FILE, TUNING_FILE, TRAIN_FILE, SUIT_FILE, MESS_FILE,
+#          MESS_VARS_FILE, CANDIDATES_FILE, POP_FILE, DOMAIN_FILE, ADM1_FILE,
+#          SENS_MASK_FILE
+# Outputs: POP_ALIGNED_FILE, outputs/surfaces/binary_p10.tif, binary_maxsss.tif
+#          outputs/tables/arp_summary.csv, arp_by_state.csv,
+#          arp_plateau_candidates.csv, mess_limiting_variable_by_state.csv
+#          outputs/figures/threshold_sensitivity_curve.png / .pdf
 # ============================================================================
 
 source(here::here("R", "params.R"))
+source(here::here("R", "helpers.R"))
 source(here::here("R", "plotting_theme.R"))
 
 suppressPackageStartupMessages({
-  library(terra)
-  library(sf)
-  library(dplyr)
-  library(maxnet)
-  library(ggplot2)
-  library(httr)
-  library(geodata)
+  library(terra); library(dplyr); library(maxnet); library(ggplot2); library(httr)
 })
 
-# ------------------------------ Load inputs ---------------------------------
+mod    <- readRDS(MODEL_FILE)
+tuning <- readRDS(TUNING_FILE)
+train  <- readRDS(TRAIN_FILE)
+suit_r <- rast(SUIT_FILE)
+cat("Model:", tuning$fc, "rm =", tuning$rm, "| rule:", tuning$rule, "\n")
 
-mod    <- readRDS(file.path(DIR_MODELS, "maxent_final.rds"))
-tuning <- readRDS(file.path(DIR_MODELS, "selected_tuning.rds"))
-train  <- readRDS(file.path(DIR_MODELS, "training_data.rds"))
-suit_r <- rast(file.path(DIR_SURFACES, "maxent_suitability.tif"))
+# ----------------------------- Thresholds -----------------------------------
+# From training predictions (year-matched values), as in 06. Two diagnostics:
+# p10 from map values at the presence sites (the map uses long-term means),
+# and maxSSS against within-belt background only (half the full background is
+# desert, which makes specificity cheap).
 
-cat("Tuning: fc =", tuning$fc, ", rm =", tuning$rm, "\n")
-cat("Presences:", nrow(train$occ_env),
-    "| Background:", nrow(train$bg_env), "\n")
-cat("Suitability range:", round(global(suit_r, "min", na.rm = TRUE)[[1]], 4),
-    "\u2013", round(global(suit_r, "max", na.rm = TRUE)[[1]], 4), "\n")
+pred_occ <- as.numeric(predict(mod, train$occ_env, type = "cloglog"))
+pred_bg  <- as.numeric(predict(mod, train$bg_env,  type = "cloglog"))
+thr <- thresholds_from(pred_occ, pred_bg)
 
-# ----------------------- Threshold selection --------------------------------
+occ_xy  <- as.matrix(train$occ_clean[, c("longitude", "latitude")])
+map_p10 <- quantile(terra::extract(suit_r, occ_xy)[, 1], OMISSION_Q, names = FALSE)
 
-pred_occ <- predict(mod, train$occ_env, type = "cloglog")[, 1]
-pred_bg  <- predict(mod, train$bg_env, type = "cloglog")[, 1]
+bg_wet  <- terra::extract(rast(SENS_MASK_FILE),
+                          as.matrix(train$bg_clean[, c("longitude", "latitude")]))[, 1] %in% 1
+thr_wet <- thresholds_from(pred_occ, pred_bg[bg_wet])
 
-# p10: 10th percentile of training presences
-p10 <- unname(quantile(pred_occ, 0.10))
-
-# maxSSS: maximum sensitivity + specificity
-candidates <- sort(unique(c(pred_occ, pred_bg)))
-sens <- sapply(candidates, function(t) mean(pred_occ >= t))
-spec <- sapply(candidates, function(t) mean(pred_bg < t))
-maxsss <- candidates[which.max(sens + spec)]
-
-cat("p10 threshold:    ", round(p10, 4), "\n")
-cat("maxSSS threshold: ", round(maxsss, 4), "\n")
-cat("Presences >= p10:   ", sum(pred_occ >= p10), "/", length(pred_occ),
-    "(", round(100 * mean(pred_occ >= p10), 1), "%)\n")
-cat("Presences >= maxSSS:", sum(pred_occ >= maxsss), "/", length(pred_occ),
-    "(", round(100 * mean(pred_occ >= maxsss), 1), "%)\n")
+cat("p10:   ", round(thr[["p10"]], 4), "| from map values at presences:", round(map_p10, 4), "\n")
+cat("maxSSS:", round(thr[["maxsss"]], 4), "| against within-belt background:",
+    round(thr_wet[["maxsss"]], 4), "\n")
+cat("Presences at or above: p10", sum(pred_occ >= thr[["p10"]]), "| maxSSS",
+    sum(pred_occ >= thr[["maxsss"]]), "of", length(pred_occ), "\n")
 
 # ----------------------- Binary surfaces ------------------------------------
 
-suit_p10    <- suit_r >= p10
-suit_maxsss <- suit_r >= maxsss
+suit_p10    <- suit_r >= thr[["p10"]]
+suit_maxsss <- suit_r >= thr[["maxsss"]]
 
 cell_area_km2 <- cellSize(suit_r, unit = "km")
 area_p10    <- global(suit_p10 * cell_area_km2, "sum", na.rm = TRUE)[[1]]
@@ -86,164 +68,136 @@ cat("\np10: ", format(round(area_p10), big.mark = ","), "km\u00b2",
 cat("maxSSS:", format(round(area_maxsss), big.mark = ","), "km\u00b2",
     "(", round(100 * area_maxsss / total_area, 1), "% of Sudan)\n")
 
-# ----------------------- Population overlay ---------------------------------
+# ----------------------------- Population -----------------------------------
 
-pop_dir <- here::here("data", "raw", "population")
-if (!dir.exists(pop_dir)) dir.create(pop_dir, recursive = TRUE)
-
-pop_100m_path <- file.path(pop_dir, "sdn_pop_2025_100m_constrained.tif")
-
-if (!file.exists(pop_100m_path)) {
-  wp_url <- paste0(
-    "https://data.worldpop.org/GIS/Population/Global_2015_2030/",
-    "R2025A/2025/SDN/v1/100m/constrained/",
-    "sdn_pop_2025_CN_100m_R2025A_v1.tif"
-  )
-
-  response <- GET(
-    wp_url,
-    user_agent("R - MSc dissertation, e.p.naymon@lse.ac.uk"),
-    write_disk(pop_100m_path, overwrite = TRUE),
-    progress()
-  )
-  Sys.sleep(1)
+if (!file.exists(POP_FILE)) {
+  response <- GET(POP_URL, user_agent("R - MSc dissertation, e.p.naymon@lse.ac.uk"),
+                  write_disk(POP_FILE, overwrite = TRUE), progress())
   stopifnot("WorldPop download failed" = status_code(response) == 200)
-  cat("Downloaded:", basename(pop_100m_path), "\n")
-} else {
-  cat("Population raster already present\n")
 }
+pop_100m  <- rast(POP_FILE)
+raw_total <- global(pop_100m, "sum", na.rm = TRUE)[[1]]
 
-pop_100m <- rast(pop_100m_path)
+# 100 m -> covariate grid by summing; the total must be conserved
+agg_factor  <- round(res(suit_r)[1] / res(pop_100m)[1])
+pop_aligned <- resample(aggregate(pop_100m, fact = agg_factor, fun = "sum", na.rm = TRUE),
+                        suit_r, method = "sum")
+aligned_total <- global(pop_aligned, "sum", na.rm = TRUE)[[1]]
+stopifnot("Population total not conserved in alignment" =
+  abs(aligned_total - raw_total) / raw_total < POP_TOL)
+writeRaster(pop_aligned, POP_ALIGNED_FILE, overwrite = TRUE)
 
-cat("Raw population total:",
-    format(round(global(pop_100m, "sum", na.rm = TRUE)[[1]]), big.mark = ","), "\n")
+# People in cells with no prediction (outside the domain or a missing covariate)
+pop_pred <- global(mask(pop_aligned, suit_r), "sum", na.rm = TRUE)[[1]]
+cat("\nWorldPop 2025:", fmt(raw_total), "| in cells with a prediction:", fmt(pop_pred),
+    "| without:", fmt(raw_total - pop_pred), "\n")
 
-# Aggregate 100m → 1km by summing, then align to suitability grid
-agg_factor <- round(res(suit_r)[1] / res(pop_100m)[1])
-pop_1km <- aggregate(pop_100m, fact = agg_factor, fun = "sum", na.rm = TRUE)
-pop_aligned <- resample(pop_1km, suit_r, method = "sum")
+# ------------------------- National estimates -------------------------------
 
-cat("Aligned population total:",
-    format(round(global(pop_aligned, "sum", na.rm = TRUE)[[1]]), big.mark = ","), "\n")
+est <- arp_estimates(suit_r, pop_aligned, thr)
+cat("\nPopulation at risk:\n")
+for (k in names(est)) cat(sprintf("  %-14s %12s (%.1f%% of WorldPop)\n",
+                                  k, fmt(est[[k]]), 100 * est[[k]] / raw_total))
 
-# -------------------- At-risk population estimates --------------------------
+# ---------------------- Where the estimate rests ----------------------------
+# Share of the risk-weighted estimate in cells outside the presence range, in
+# cells with nights hotter than any presence (suitability saturates there
+# without support), and in the >= 150 mm region (supplement comparison with
+# the dissertation's within-mask figure).
 
-arp_p10      <- global(pop_aligned * suit_p10, "sum", na.rm = TRUE)[[1]]
-arp_maxsss   <- global(pop_aligned * suit_maxsss, "sum", na.rm = TRUE)[[1]]
-arp_weighted <- global(pop_aligned * suit_r, "sum", na.rm = TRUE)[[1]]
-total_pop    <- global(pop_aligned, "sum", na.rm = TRUE)[[1]]
+rw_r   <- pop_aligned * suit_r
+mess_r <- rast(MESS_FILE)
+hot_r  <- domain_covs("lst_night") > max(train$occ_env$lst_night)
+wet_r  <- rast(SENS_MASK_FILE) == 1
 
-cat("\n--- At-Risk Population ---\n")
-cat("Total Sudan population (WorldPop 2025):",
-    format(round(total_pop), big.mark = ","), "\n\n")
-cat("p10 ARP:          ", format(round(arp_p10), big.mark = ","),
-    "(", round(100 * arp_p10 / total_pop, 1), "%)\n")
-cat("maxSSS ARP:       ", format(round(arp_maxsss), big.mark = ","),
-    "(", round(100 * arp_maxsss / total_pop, 1), "%)\n")
-cat("Risk-weighted ARP:", format(round(arp_weighted), big.mark = ","),
-    "(", round(100 * arp_weighted / total_pop, 1), "%)\n")
+part  <- function(cond) global(rw_r * cond, "sum", na.rm = TRUE)[[1]]
+parts <- c(outside_presence_range = part(mess_r < 0),
+           nights_hotter_than_presences = part(hot_r),
+           within_150mm_region = part(wet_r))
+cat("\nRisk-weighted estimate by support:\n")
+for (k in names(parts)) cat(sprintf("  %-30s %12s (%.1f%% of headline)\n",
+                                    k, fmt(parts[[k]]), 100 * parts[[k]] / est[["risk_weighted"]]))
 
-# ------------------ ARP by extrapolation and mask status --------------------
-# Decomposes the risk-weighted ARP by
-#   MESS status:     interpolation (MESS >= 0) vs extrapolation (MESS < 0), from 07
-#   ecological mask: inside (>= 150 mm rainfall) vs outside
-# Shows how much of the headline estimate sits in novel environments or in
-# cells the ecological mask defines as outside the transmission system.
+# -------------------------- Plateau candidates ------------------------------
+# Risk-weighted estimate from each 06b candidate. The selected model's 06b
+# surface must match 07's exactly.
 
-mess_r <- rast(file.path(DIR_SURFACES, "mess_surface.tif"))
-eco_r  <- rast(file.path(DIR_COVARIATES, "ecological_mask_150mm.tif"))
+cand     <- rast(CANDIDATES_FILE)
+sel_name <- paste0(tuning$fc, " rm ", tuning$rm)
+stopifnot("06b surface for the selected model differs from SUIT_FILE" =
+  global(abs(cand[[sel_name]] - suit_r), "max", na.rm = TRUE)[[1]] < 1e-6)
 
-stopifnot(
-  "MESS grid differs from suitability grid" =
-    compareGeom(mess_r, suit_r, stopOnError = FALSE),
-  "Mask grid differs from suitability grid" =
-    compareGeom(eco_r, suit_r, stopOnError = FALSE)
-)
+cand_rw <- sapply(names(cand), function(nm)
+  global(pop_aligned * cand[[nm]], "sum", na.rm = TRUE)[[1]])
+cand_df <- data.frame(candidate = names(cand), risk_weighted = round(cand_rw),
+                      change_vs_selected = round(100 * (cand_rw / est[["risk_weighted"]] - 1), 1))
+cat("\nPlateau candidates:\n"); print(cand_df, row.names = FALSE)
 
-novel_r   <- mess_r < 0     # TRUE = extrapolation
-in_mask_r <- eco_r == 1     # TRUE = inside the >= 150 mm domain
+# -------------------------------- States ------------------------------------
 
-risk_weighted_r <- pop_aligned * suit_r
+zones  <- state_zones(suit_r)
+layers <- c(pop_aligned, rw_r,
+            pop_aligned * (suit_r >= thr[["p10"]]),
+            pop_aligned * (suit_r >= thr[["maxsss"]]),
+            rw_r * (mess_r < 0))
+names(layers) <- c("total_pop", "arp_weighted", "arp_p10", "arp_maxsss", "arp_outside_range")
+cand_r <- pop_aligned * cand
+names(cand_r) <- paste0("rw_", gsub(" ", "_", names(cand)))
 
-arp_where <- function(cond_r) {
-  global(risk_weighted_r * cond_r, "sum", na.rm = TRUE)[[1]]
-}
+state_arp <- zonal(c(layers, cand_r), zones, fun = "sum", na.rm = TRUE)
+names(state_arp)[1] <- "state"
 
-arp_interp   <- arp_where(!novel_r)
-arp_novel    <- arp_where(novel_r)
-arp_in_mask  <- arp_where(in_mask_r)
-arp_out_mask <- arp_where(!in_mask_r)
+stopifnot("State estimates do not sum to the national estimate" =
+  abs(sum(state_arp$arp_weighted) - est[["risk_weighted"]]) / est[["risk_weighted"]] < POP_TOL)
 
-# 2 x 2: MESS status x mask status
-arp_cross <- expand.grid(novel = c(FALSE, TRUE), in_mask = c(TRUE, FALSE))
-arp_cross$arp <- mapply(function(n, m) {
-  cond_mess <- if (n) novel_r else !novel_r
-  cond_mask <- if (m) in_mask_r else !in_mask_r
-  arp_where(cond_mess & cond_mask)
-}, arp_cross$novel, arp_cross$in_mask)
-arp_cross$pct_of_headline <- round(100 * arp_cross$arp / arp_weighted, 1)
+pres_state <- as.character(terra::extract(zones, occ_xy)[, 1])
+state_arp$n_presences <- as.integer(table(factor(pres_state, levels = state_arp$state)))
+stopifnot("Not every presence was assigned to a state" =
+  sum(state_arp$n_presences) == nrow(train$occ_clean))
 
-fmt <- function(x) format(round(x), big.mark = ",")
+alt <- setdiff(names(cand_r), paste0("rw_", gsub(" ", "_", sel_name)))
+state_arp <- state_arp |>
+  mutate(pct_weighted      = round(100 * arp_weighted / total_pop, 1),
+         pct_outside_range = round(100 * arp_outside_range / arp_weighted, 1),
+         across(all_of(alt), ~ round(100 * (. / arp_weighted - 1), 1),
+                .names = "{.col}_pct_change")) |>
+  arrange(desc(arp_weighted))
 
-cat("\n--- Risk-weighted ARP by MESS and mask status ---\n")
-cat("Interpolation (MESS >= 0):", fmt(arp_interp), "\n")
-cat("Extrapolation (MESS < 0): ", fmt(arp_novel),
-    "(", round(100 * arp_novel / arp_weighted, 1), "% of headline )\n")
-cat("Inside ecological mask:   ", fmt(arp_in_mask), "\n")
-cat("Outside ecological mask:  ", fmt(arp_out_mask),
-    "(", round(100 * arp_out_mask / arp_weighted, 1), "% of headline )\n")
-cat("Check: MESS parts =", fmt(arp_interp + arp_novel),
-    "| mask parts =", fmt(arp_in_mask + arp_out_mask),
-    "| headline =", fmt(arp_weighted), "\n\n")
-print(transform(arp_cross, arp = fmt(arp)), row.names = FALSE)
+cat("\nStates (risk-weighted; support; plateau sensitivity):\n")
+state_arp |>
+  select(state, n_presences, total_pop, arp_weighted, pct_weighted, arp_maxsss,
+         arp_p10, pct_outside_range, ends_with("_pct_change")) |>
+  mutate(across(c(total_pop, arp_weighted, arp_maxsss, arp_p10), fmt)) |>
+  print(right = FALSE)
 
+# -------------- Outside the presence range: which covariate -----------------
 
-# ---------------- ARP beyond the presence thermal range ---------------------
-# The LST-night response plateaus near 1.0 above ~24°C, but no training
-# presence has a night warmer than the presence maximum. Cells hotter than
-# that get full thermal suitability without presence support. MESS doesn't
-# flag them because they sit inside the background range. This checks which cells
-# on the raster are hotter than any training presences
-
-lst_r <- rast(file.path(DIR_COVARIATES, COV_FILES["lst_night"]))
-stopifnot("LST grid differs from suitability grid" =
-            compareGeom(lst_r, suit_r, stopOnError = FALSE))
-
-lst_pres_max <- max(train$occ_env$lst_night)
-hot_r <- lst_r > lst_pres_max
-
-arp_hot <- arp_where(hot_r)
-pop_hot <- global(pop_aligned * hot_r, "sum", na.rm = TRUE)[[1]]
-
-cat("\n--- Risk-weighted ARP beyond the presence LST-night maximum ---\n")
-cat("Presence LST-night maximum:", round(lst_pres_max, 2), "\u00b0C\n")
-cat("Population in hotter cells:       ", fmt(pop_hot), "\n")
-cat("Risk-weighted ARP in hotter cells:", fmt(arp_hot),
-    "(", round(100 * arp_hot / arp_weighted, 1), "% of headline )\n")
+mess_vars <- rast(MESS_VARS_FILE)
+lim_r <- which.min(mess_vars)
+lim_layers <- do.call(c, lapply(seq_len(nlyr(mess_vars)), function(i)
+  rw_r * (mess_r < 0) * (lim_r == i)))
+names(lim_layers) <- names(mess_vars)
+lim_state <- zonal(lim_layers, zones, fun = "sum", na.rm = TRUE)
+names(lim_state)[1] <- "state"
+cat("\nRisk-weighted estimate outside the presence range, by limiting covariate:\n")
+lim_state |> mutate(across(-state, fmt)) |> print(right = FALSE)
 
 # -------------------- Threshold sensitivity curve ---------------------------
+v <- data.frame(s = values(suit_r, mat = FALSE), p = values(pop_aligned, mat = FALSE))
+v <- v[complete.cases(v), ]
+thresh_df <- data.frame(threshold = seq(0, 0.95, by = 0.01))
+thresh_df$arp <- sapply(thresh_df$threshold, function(t) sum(v$p[v$s >= t]))
 
-thresholds <- seq(0, 0.95, by = 0.01)
-
-arp_by_thresh <- sapply(thresholds, function(t) {
-  global(pop_aligned * (suit_r >= t), "sum", na.rm = TRUE)[[1]]
-})
-
-thresh_df <- data.frame(
-  threshold = thresholds,
-  arp       = arp_by_thresh,
-  pct_pop   = 100 * arp_by_thresh / total_pop
-)
 
 p_thresh <- ggplot(thresh_df, aes(x = threshold, y = arp / 1e6)) +
   geom_line(linewidth = 0.8) +
-  geom_vline(xintercept = p10,    linetype = "dashed", colour = col_p10) +
-  geom_vline(xintercept = maxsss, linetype = "dashed", colour = col_maxsss) +
-  annotate("text", x = p10 + 0.02,    y = max(arp_by_thresh / 1e6) * 0.9,
-           label = paste0("p10 (", round(p10, 3), ")"),
+  geom_vline(xintercept = thr[['p10']],    linetype = "dashed", colour = col_p10) +
+  geom_vline(xintercept = thr[['maxsss']], linetype = "dashed", colour = col_maxsss) +
+  annotate("text", x = thr[["p10"]] + 0.02,    y = max(thresh_df$arp / 1e6) * 0.9,
+           label = paste0("p10 (", round(thr[["p10"]], 3), ")"),
            hjust = 0, size = 3.2, colour = "steelblue") +
-  annotate("text", x = maxsss + 0.02, y = max(arp_by_thresh / 1e6) * 0.8,
-           label = paste0("maxSSS (", round(maxsss, 3), ")"),
+  annotate("text", x = thr[["maxsss"]] + 0.02, y = max(thresh_df$arp / 1e6) * 0.8,
+           label = paste0("maxSSS (", round(thr[["maxsss"]], 3), ")"),
            hjust = 0, size = 3.2, colour = "firebrick") +
   labs(#title = "Threshold sensitivity of at-risk population estimate",
        x = "Suitability threshold",
@@ -259,125 +213,16 @@ save_fig(file.path(DIR_FIGS, "threshold_sensitivity_curve.pdf"), p_thresh,
        width = FIG_WIDTH_FULL, height = FIG_HEIGHT_PLOT)
 cat("Saved threshold_sensitivity_curve.png and threshold_sensitivity_curve.pdf\n")
 
-# ----------------------- State-level breakdown ------------------------------
-
-adm1 <- gadm(country = "SDN", level = 1, path = here::here("data", "raw"))
-
-risk_weighted_r <- pop_aligned * suit_r
-
-state_arp <- data.frame(
-  state        = adm1$NAME_1,
-  total_pop    = terra::extract(pop_aligned, adm1, fun = "sum", na.rm = TRUE, ID = FALSE)[[1]],
-  arp_p10      = terra::extract(pop_aligned * suit_p10, adm1, fun = "sum", na.rm = TRUE, ID = FALSE)[[1]],
-  arp_maxsss   = terra::extract(pop_aligned * suit_maxsss, adm1, fun = "sum", na.rm = TRUE, ID = FALSE)[[1]],
-  arp_weighted = terra::extract(risk_weighted_r, adm1, fun = "sum", na.rm = TRUE, ID = FALSE)[[1]]
-)
-
-state_arp <- state_arp |>
-  mutate(
-    pct_p10      = round(100 * arp_p10 / total_pop, 1),
-    pct_maxsss   = round(100 * arp_maxsss / total_pop, 1),
-    pct_weighted = round(100 * arp_weighted / total_pop, 1)
-  ) |>
-  arrange(desc(arp_weighted))
-
-cat("\nState-level ARP (sorted by risk-weighted):\n")
-state_arp |>
-  mutate(across(c(total_pop, arp_p10, arp_maxsss, arp_weighted),
-                ~ format(round(.), big.mark = ","))) |>
-  print(right = FALSE)
-
-# ----------------------- State-level diagnostics ----------------------------
-# Where the risk-weighted ARP sits relative to the ecological mask, MESS
-# extrapolation, and nights hotter than any training presence.
-
-state_sum <- function(r) {
-  terra::extract(r, adm1, fun = "sum", na.rm = TRUE, ID = FALSE)[[1]]
-}
-
-state_diag <- data.frame(
-  state         = adm1$NAME_1,
-  arp_weighted  = state_sum(risk_weighted_r),
-  arp_in_mask   = state_sum(risk_weighted_r * in_mask_r),
-  arp_novel     = state_sum(risk_weighted_r * novel_r),
-  arp_hot_night = state_sum(risk_weighted_r * hot_r)
-) |>
-  mutate(
-    pct_outside_mask = round(100 * (1 - arp_in_mask / arp_weighted), 1),
-    pct_novel        = round(100 * arp_novel / arp_weighted, 1),
-    pct_hot_night    = round(100 * arp_hot_night / arp_weighted, 1)
-  ) |>
-  arrange(desc(arp_weighted))
-
-cat("\nState-level ARP diagnostics:\n")
-state_diag |>
-  mutate(across(c(arp_weighted, arp_in_mask, arp_novel, arp_hot_night),
-                ~ format(round(.), big.mark = ","))) |>
-  print(right = FALSE)
-
-
-# ------------------- What makes novel cells novel? --------------------------
-# In MESS < 0 cells, which covariate is furthest outside the training range
-# (the "most dissimilar variable")? Weighted by risk-weighted ARP, by state.
-
-mess_vars <- rast(file.path(DIR_SURFACES, "mess_by_variable.tif"))
-stopifnot("MESS layers differ from suitability grid" =
-            compareGeom(mess_vars, suit_r, stopOnError = FALSE))
-
-mod_r <- which.min(mess_vars)   # index of the covariate with the lowest score
-
-mod_by_state <- bind_rows(lapply(seq_len(nlyr(mess_vars)), function(i) {
-  data.frame(
-    state    = adm1$NAME_1,
-    variable = names(mess_vars)[i],
-    arp      = state_sum(risk_weighted_r * novel_r * (mod_r == i)),
-    cells    = state_sum(novel_r * (mod_r == i))
-  )
-})) |>
-  filter(cells > 0) |>
-  group_by(state) |>
-  mutate(pct_of_state_novel_arp =
-           if (sum(arp) > 0) round(100 * arp / sum(arp), 1) else NA_real_) |>
-  ungroup() |>
-  arrange(state, desc(arp))
-
-cat("\nMost dissimilar variable in novel cells, by state:\n")
-mod_by_state |> mutate(arp = fmt(arp)) |> print(n = Inf)
-
 # --------------------------------- Save -------------------------------------
 
+writeRaster(suit_r >= thr[["p10"]],    file.path(DIR_SURFACES, "binary_p10.tif"),    overwrite = TRUE)
+writeRaster(suit_r >= thr[["maxsss"]], file.path(DIR_SURFACES, "binary_maxsss.tif"), overwrite = TRUE)
+
+write.csv(data.frame(metric = names(est), arp = round(est),
+                     pct_of_pop = round(100 * est / raw_total, 1),
+                     threshold = c(NA, thr[["p10"]], thr[["maxsss"]])),
+          file.path(DIR_TABLES, "arp_summary.csv"), row.names = FALSE)
 write.csv(state_arp, file.path(DIR_TABLES, "arp_by_state.csv"), row.names = FALSE)
-
-writeRaster(suit_p10,    file.path(DIR_SURFACES, "binary_p10.tif"), overwrite = TRUE)
-writeRaster(suit_maxsss, file.path(DIR_SURFACES, "binary_maxsss.tif"), overwrite = TRUE)
-writeRaster(pop_aligned, file.path(DIR_SURFACES, "worldpop_2025_aligned.tif"), overwrite = TRUE)
-
-arp_summary <- data.frame(
-  metric     = c("p10", "maxSSS", "risk_weighted"),
-  threshold  = c(round(p10, 4), round(maxsss, 4), NA),
-  arp        = c(round(arp_p10), round(arp_maxsss), round(arp_weighted)),
-  pct_of_pop = c(round(100 * arp_p10 / total_pop, 1),
-                 round(100 * arp_maxsss / total_pop, 1),
-                 round(100 * arp_weighted / total_pop, 1)),
-  total_pop  = round(total_pop)
-)
-write.csv(arp_summary, file.path(DIR_TABLES, "arp_summary.csv"), row.names = FALSE)
-write.csv(state_diag, file.path(DIR_TABLES, "arp_by_state_diagnostics.csv"),
-          row.names = FALSE)
-write.csv(arp_cross, file.path(DIR_TABLES, "arp_by_mess_and_mask.csv"),
-          row.names = FALSE)
-write.csv(mod_by_state,
-          file.path(DIR_TABLES, "mess_limiting_variable_by_state.csv"),
-          row.names = FALSE)
-
-cat("\nSaved:\n")
-cat("  ", file.path(DIR_TABLES, "arp_by_state.csv"), "\n")
-cat("  ", file.path(DIR_TABLES, "arp_summary.csv"), "\n")
-cat("  ", file.path(DIR_TABLES, "arp_by_state_diagnostics.csv"), "\n")
-cat("  ", file.path(DIR_TABLES, "arp_by_mess_and_mask.csv"), "\n")
-
-cat("  ", file.path(DIR_SURFACES, "binary_p10.tif"), "\n")
-cat("  ", file.path(DIR_SURFACES, "binary_maxsss.tif"), "\n")
-cat("  ", file.path(DIR_SURFACES, "worldpop_2025_aligned.tif"), "\n")
-
+write.csv(cand_df,   file.path(DIR_TABLES, "arp_plateau_candidates.csv"), row.names = FALSE)
+write.csv(lim_state, file.path(DIR_TABLES, "mess_limiting_variable_by_state.csv"), row.names = FALSE)
 cat("08_pop_estimate.R complete\n")

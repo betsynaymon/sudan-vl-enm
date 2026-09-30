@@ -101,3 +101,66 @@ eval_fold <- function(mod, test_occ, test_bg, train_occ) {
 
   data.frame(auc = auc, cbi = cbi, or_10p = or10)
 }
+
+# p10 (OMISSION_Q quantile of presence predictions) and maxSSS (maximum
+# sensitivity + specificity against the background).
+thresholds_from <- function(pred_occ, pred_bg) {
+  cand <- sort(unique(c(pred_occ, pred_bg)))
+  sss  <- sapply(cand, function(t) mean(pred_occ >= t) + mean(pred_bg < t))
+  c(p10 = unname(quantile(pred_occ, OMISSION_Q)), maxsss = cand[which.max(sss)])
+}
+
+# Thousands separator for printed counts.
+fmt <- function(x) format(round(x), big.mark = ",")
+
+# Long-term covariates for `vars`, masked to the domain: the prediction stack
+# (06b, 07 and every refit).
+domain_covs <- function(vars) {
+  r <- terra::rast(file.path(DIR_COVARIATES, COV_FILES[vars]))
+  names(r) <- vars
+  terra::mask(r, terra::rast(DOMAIN_FILE), maskvalues = 0)
+}
+
+# Spatial CV for one configuration, as in 06: each fold's model is fitted on
+# the other folds and scored on its own. `fold` is each row's own fold. A
+# failed fit stops rather than being skipped.
+cv_maxnet <- function(pa, env, fold, fc, rm) {
+  do.call(rbind, lapply(seq_len(K_FOLDS), function(k) {
+    tr <- fold != k
+    m  <- fit_maxnet(pa[tr], env[tr, ], fc, rm)
+    cbind(fold = k, n_test_pres = sum(!tr & pa == 1),
+          eval_fold(m, test_occ  = env[!tr & pa == 1, ],
+                       test_bg   = env[!tr & pa == 0, ],
+                       train_occ = env[tr & pa == 1, ]))
+  }))
+}
+
+# Fit, cross-validate and threshold one configuration on a presence and
+# background set: the refit used by 10, 12 and 15.
+refit_maxnet <- function(occ_env, bg_env, occ_fold, bg_fold, fc, rm) {
+  pa  <- c(rep(1, nrow(occ_env)), rep(0, nrow(bg_env)))
+  env <- rbind(occ_env, bg_env)
+  mod <- fit_maxnet(pa, env, fc, rm)
+  list(mod = mod,
+       cv  = cv_maxnet(pa, env, c(occ_fold, bg_fold), fc, rm),
+       thr = thresholds_from(as.numeric(predict(mod, occ_env, type = "cloglog")),
+                             as.numeric(predict(mod, bg_env,  type = "cloglog"))))
+}
+
+# Population at risk: risk-weighted (population x suitability) and binary at
+# each threshold, over cells with both a prediction and a population value.
+arp_estimates <- function(suit_r, pop_r, thr) {
+  v <- data.frame(s = terra::values(suit_r, mat = FALSE),
+                  p = terra::values(pop_r,  mat = FALSE))
+  v <- v[complete.cases(v), ]
+  c(risk_weighted = sum(v$p * v$s),
+    p10    = sum(v$p[v$s >= thr[["p10"]]]),
+    maxsss = sum(v$p[v$s >= thr[["maxsss"]]]))
+}
+
+# One state per domain cell. touches = TRUE keeps the domain's boundary cells;
+# cells on internal borders go to one state, never two.
+state_zones <- function(template) {
+  z <- terra::rasterize(terra::vect(ADM1_FILE), template, field = "NAME_1", touches = TRUE)
+  terra::mask(z, terra::rast(DOMAIN_FILE), maskvalues = 0)
+}

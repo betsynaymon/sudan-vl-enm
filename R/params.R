@@ -27,7 +27,11 @@ OCC_FILE     <- file.path(DIR_PROCESSED, "occurrences_thinned.csv")   # written 
 BG_FILE      <- file.path(DIR_PROCESSED, "background_points.csv")     # written by 04
 TT_FILE      <- file.path(DIR_RAW, "weiss_travel_time.tif")           # downloaded by 11
 POP_FILE     <- file.path(DIR_POP, "sdn_pop_2025_100m_constrained.tif") # downloaded by 08
-
+POP_URL <- paste0("https://data.worldpop.org/GIS/Population/Global_2015_2030/",
+                  "R2025A/2025/SDN/v1/100m/constrained/sdn_pop_2025_CN_100m_R2025A_v1.tif")
+POP_ALIGNED_FILE <- file.path(DIR_SURFACES, "worldpop_2025_aligned.tif")
+CANDIDATES_FILE  <- file.path(DIR_SURFACES, "plateau_candidate_surfaces.tif")
+POP_TOL <- 0.001   # max relative change allowed when aligning or summing population
 
 # ----- Covariate filename lookup -----
 # All candidates screened in 03 (static layers and 2000-2024 long-term means).
@@ -87,6 +91,15 @@ REFERRAL_IDS <- c(78)
 # primary model: Pigott included only autochthonous cases. Dropped in the
 # sensitivity refit (10).
 KHARTOUM_CASE_IDS <- c(4, 5, 8, 15)
+
+# Wad Madani case records (Pigott et al. 2014; one location, 2001 and 2002):
+# the same concern as Khartoum. Dropped with them in a widened refit (10).
+CENTRAL_CITY_CASE_IDS <- c(6, 13)
+
+# Hassan et al. 2020 fig 4: vector-positive trap site near Khartoum (2013),
+# the only dry-riverine presence. In the precision set; also refitted alone
+# (10) to separate its effect from positional error.
+KHARTOUM_VECTOR_ID <- 121
 
 # Precision check (10): map-digitised sources with positional error > 4 km
 # (python/03_digitized_points_check.ipynb)
@@ -148,6 +161,10 @@ BOYCE_RES <- 100                            # ecospat.boyce resolution (06, 15)
 # wettest presences is shaped by clamping and is treated as extrapolation.
 SELECTED_FC <- "LQHP"
 SELECTED_RM <- 4
+
+# 06b also refits these feature classes at the plateau's lowest rm, as a
+# reference without product features.
+PLATEAU_REF_FC <- "LQH"
 
 
 # Underfitting check (06): configurations are also scored within the >= 150 mm

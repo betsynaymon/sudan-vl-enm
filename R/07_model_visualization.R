@@ -45,9 +45,7 @@ cat("Selected config:", sel$fc, "rm =", sel$rm, "| rule:", sel$rule, "\n")
 cat("Model features:", length(mod$betas), "\n")
 cat("Training presences:", nrow(occ_env), "| Background:", nrow(bg_env), "\n")
 
-covs <- rast(file.path(DIR_COVARIATES, COV_FILES[retained_vars]))
-names(covs) <- retained_vars
-covs_dom <- mask(covs, rast(DOMAIN_FILE), maskvalues = 0)
+covs_dom <- domain_covs(retained_vars)
 
 sudan  <- st_as_sf(vect(ADM0_FILE))
 states <- st_as_sf(vect(ADM1_FILE))
