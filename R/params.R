@@ -28,7 +28,7 @@ COV_FILES <- c(
 )
 
 # ----- Study area/mask -----
-MASK_RAINFALL_MM <- 150     # >= 150mm CHIRPS; conservative outer bound
+#MASK_RAINFALL_MM <- 150     # >= 150mm CHIRPS; conservative outer bound
 
 # ----- Spatial thinning -----
 THIN_KM <- 5     # see 02_spatial_thinning.R
@@ -65,5 +65,6 @@ ENM_RM <- seq(0.5, 4, by = 0.5)           # regularization multipliers
 
 # ----- Null Model Test -----
 N_NULL <- 99        # randomizations 
-N_PRES <- 98        # match observed presence count
+# Changed 9/30 to run without mask
+N_PRES <- 99        # match observed presence count 
 N_DRAW <- N_PRES * 2

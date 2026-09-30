@@ -60,3 +60,6 @@ R/fig_study_area.R
 
 # --- post-dissertation exploratory analyses ---
 R/24_*.R
+
+# --- masked version ---
+outputs_archive_masked/
