@@ -5,10 +5,9 @@
 # to disk for all downstream scripts. Screening uses the prediction-surface
 # layers (static covariates + 2000–2024 long-term means).
 #
-# Inputs:  data/raw/ (9 candidate covariate rasters + ecological mask)
-# Outputs: outputs/retained_vars.rds
-#          outputs/correlation_matrix.rds  (cached, speeds up reruns)
-#          outputs/collinearity_sample.rds (cached, speeds up reruns)
+# Inputs:  COV_FILES (9 candidates), DOMAIN_FILE
+# Outputs: outputs/models/retained_vars.rds
+#          outputs/models/correlation_matrix.rds (read by 15 for labels)
 #          outputs/figures/collinearity_correlation_matrix.png
 #          outputs/figures/collinearity_correlation_matrix.pdf
 # ============================================================================
@@ -17,64 +16,40 @@ source(here::here("R", "params.R"))
 
 suppressPackageStartupMessages({
   library(terra)
-  library(usdm)
   library(ggplot2)
 })
 
 set.seed(SEED)
 
 # ----------------------- Load candidate covariates --------------------------
+covs <- rast(file.path(DIR_COVARIATES, COV_FILES))
+names(covs) <- names(COV_FILES)
 
-covariate_files <- c(
-  elevation  = "elevation_1km.tif",
-  slope      = "slope_1km.tif",
-  river_dist = "river_distance_1km.tif",
-  vertisols  = "vertisols_1km.tif",
-  lst_day    = "lst_day_annual_mean_2000_2024_1km.tif",
-  lst_night  = "lst_night_annual_mean_2000_2024_1km.tif",
-  ndvi       = "ndvi_annual_mean_2000_2024_1km.tif",
-  rainfall   = "rainfall_mean_2000_2024_1km.tif",
-  treecover  = "treecover_mean_2000_2024_1km.tif"
-)
+# Screen over the calibration domain: collinearity matters where the model
+# is fitted, and the background covers all of Sudan. Values are read into
+# memory; sampling rows is far faster than spatSample() on a file-backed stack.
+in_domain <- values(rast(DOMAIN_FILE), mat = FALSE) == 1
+vals <- values(covs)[in_domain, ]
 
-covs <- rast(file.path(DIR_COVARIATES, covariate_files))
-names(covs) <- names(covariate_files)
-
-# Apply ecological mask so screening covers only the modelled area
-mask_r <- rast(file.path(DIR_COVARIATES, "ecological_mask_150mm.tif"))
-covs_masked <- mask(covs, mask_r, maskvalues = 0)
-
-cat("Non-NA cells per layer:\n")
-print(global(covs_masked, "notNA"))
+cat("Non-NA domain cells per layer:\n")
+print(colSums(!is.na(vals)))
 
 # ----------------------- Sample and correlate -------------------------------
-# This step is slow (~100k raster cells). Results are cached to disk so the
-# figure and VIF sections can be rerun without resampling.
+# Region >= 150 mm within the domain. The mask is not clipped to Sudan,
+# so it is always intersected with the domain.
+sens_dom <- values(rast(SENS_MASK_FILE), mat = FALSE)[in_domain] %in% 1
+ok <- complete.cases(vals)
 
-cor_mat_path <- file.path(DIR_MODELS, "correlation_matrix.rds")
-sample_vals_path <- file.path(DIR_MODELS, "collinearity_sample.rds")
+set.seed(SEED)
+sample_vals <- as.data.frame(vals[ok, ][sample(sum(ok), COLLIN_SAMPLE_N), ])
+set.seed(SEED)
+wet_vals <- vals[ok & sens_dom, ][sample(sum(ok & sens_dom), COLLIN_SAMPLE_N), ]
+rm(vals)
+cor_wet <- cor(wet_vals)
+saveRDS(cor_wet, file.path(DIR_MODELS, "correlation_matrix_150mm.rds"))
+cor_mat <- cor(sample_vals, use = "complete.obs", method = "pearson")
 
-if (file.exists(sample_vals_path) && file.exists(cor_mat_path)) {
-  cat("Loading cached collinearity sample and correlation matrix\n")
-  sample_vals <- readRDS(sample_vals_path)
-  cor_mat <- readRDS(cor_mat_path)
-} else {
-  set.seed(SEED)
-
-  sample_vals <- spatSample(
-    covs_masked,
-    size = COLLIN_SAMPLE_N,
-    method = "random",
-    na.rm = TRUE,
-    values = TRUE
-  )
-
-  cor_mat <- cor(sample_vals, use = "complete.obs", method = "pearson")
-
-  saveRDS(sample_vals, sample_vals_path)
-  saveRDS(cor_mat, cor_mat_path)
-  cat("Computed and cached collinearity results\n")
-}
+saveRDS(cor_mat, file.path(DIR_MODELS, "correlation_matrix.rds"))
 
 cat("Sample:", nrow(sample_vals), "cells\n")
 cat("\nPearson correlation matrix:\n")
@@ -92,9 +67,9 @@ if (nrow(high_pairs) > 0) {
 }
 
 # ------------------------ VIF candidate sets --------------------------------
-# Two collinearity clusters: greenness-wetness (NDVI, tree cover, rainfall)
-# and temperature-elevation (LST day, LST night, elevation). Each candidate
-# set resolves both clusters differently.
+# Candidate sets resolve the greenness-wetness group (NDVI, tree cover,
+# rainfall) and the temperature-elevation group (LST day, LST night,
+# elevation) differently.
 
 candidate_sets <- list(
   A_rain         = c("slope", "river_dist", "vertisols", "lst_night", "rainfall"),
@@ -105,27 +80,51 @@ candidate_sets <- list(
 
 for (set_name in names(candidate_sets)) {
   cat("\n---", set_name, "---\n")
-  print(usdm::vif(sample_vals[, candidate_sets[[set_name]]]))
+  print(round(diag(solve(cor_mat[candidate_sets[[set_name]], candidate_sets[[set_name]]])), 2))
 }
 
 # ---------------------- Finalize variable set -------------------------------
-# Set A selected on ecological grounds:
-#   slope       topographic steepness; independent of elevation (r = 0.56)
-#   river_dist  distance to drainage incl. seasonal khors; independent (|r| <= 0.21)
-#   vertisols   black-cotton soil; independent (|r| <= 0.25)
-#   lst_night   night temperature — conditions the nocturnal vector experiences
-#   rainfall    represents the moisture-vegetation axis (most stable single measure)
-#
-# Dropped (4), each redundant with a retained variable:
-#   elevation   distal proxy; acts through temperature (r = -0.77 with lst_night)
-#   lst_day     daytime thermal window; tracks lst_night (0.62) and rainfall (-0.72)
-#   ndvi        near-duplicate of rainfall (0.86); conflates crop and woodland
-#   treecover   redundant with rainfall (0.70); forest-built metric, near-zero in belt
+# Set A, selected on ecological grounds:
+#   slope       topographic steepness
+#   river_dist  distance to drainage, including seasonal khors
+#   vertisols   black-cotton soil
+#   lst_night   night temperature, the conditions the nocturnal vector experiences
+#   rainfall    the moisture-vegetation axis (most stable single measure)
+# Dropped as redundant with a retained variable (evidence printed below):
+#   elevation   distal proxy; acts through temperature
+#   lst_day     daytime thermal window
+#   ndvi        conflates crop and woodland
+#   treecover   forest-built metric, near-zero in the endemic belt
 
 retained_vars <- c("slope", "river_dist", "vertisols", "lst_night", "rainfall")
 
+cat("\nStrongest correlation of each dropped variable with a retained one:\n")
+for (v in setdiff(names(COV_FILES), retained_vars)) {
+  r <- cor_mat[v, retained_vars]
+  j <- which.max(abs(r))
+  cat(sprintf("  %-10s %-10s r = %5.2f\n", v, retained_vars[j], r[j]))
+}
+
+cat("\nSame, within the >= 150 mm region of the domain:\n")
+for (v in setdiff(names(COV_FILES), retained_vars)) {
+  r <- cor_wet[v, retained_vars]
+  j <- which.max(abs(r))
+  cat(sprintf("  %-10s %-10s r = %5.2f\n", v, retained_vars[j], r[j]))
+}
+
+r_ret <- cor_mat[retained_vars, retained_vars]
+diag(r_ret) <- NA
+vif_ret <- diag(solve(cor_mat[retained_vars, retained_vars]))
 cat("\nFinal variable set VIF:\n")
-print(usdm::vif(sample_vals[, retained_vars]))
+print(round(vif_ret, 2))
+cat("Max |r| among retained:", round(max(abs(r_ret), na.rm = TRUE), 2), "\n")
+
+# Stop before writing retained_vars.rds if the set fails either screen:
+# the selection then needs reassessing, not propagating downstream.
+stopifnot(
+  "A retained pair exceeds COR_THRESHOLD" = max(abs(r_ret), na.rm = TRUE) < COR_THRESHOLD,
+  "A retained VIF exceeds VIF_THRESHOLD"  = max(vif_ret) < VIF_THRESHOLD
+)
 
 saveRDS(retained_vars, file.path(DIR_MODELS, "retained_vars.rds"))
 cat("Saved retained_vars.rds\n")

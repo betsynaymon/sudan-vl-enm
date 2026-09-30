@@ -1,21 +1,14 @@
 # ============================================================================
 # 05_spatial_cv_folds.R
-# Estimates covariate autocorrelation range, builds spatial block CV folds for
-# presences and background points, and saves a single fold object that all
-# downstream scripts share.
+# Estimates covariate autocorrelation range, shows presence balance across
+# candidate block sizes, builds spatial block CV folds, and saves them keyed
+# by point ID so downstream scripts join folds to data rather than relying
+# on row order.
 #
-# Block size (100 km) was selected after testing larger sizes (706, 350, 200 km)
-# which all produced severely imbalanced folds due to Gedaref clustering.
-# 100 km with k=4 and random assignment (200 iterations) gives viable
-# per-fold presence balance while maintaining spatial independence.
-#
-# Inputs:  data/processed/occurrences_thinned.csv
-#          data/processed/background_points.csv
-#          data/raw/ (retained covariate rasters + ecological mask)
-#          outputs/models/retained_vars.rds
-# Outputs: outputs/models/spatial_cv_folds.rds  (committed to repo)
-#          outputs/figures/spatial_cv_fold_map.png
-#          outputs/figures/spatial_cv_fold_map.pdf
+# Inputs:  OCC_FILE, BG_FILE, DOMAIN_FILE, ADM0_FILE, retained_vars.rds
+# Outputs: FOLD_TABLE_FILE (pa, id, fold): what downstream scripts use
+#          FOLDS_FILE (blockCV object; its blocks assign folds to new points)
+#          outputs/figures/spatial_cv_fold_map.png / .pdf
 # ============================================================================
 
 source(here::here("R", "params.R"))
@@ -31,42 +24,40 @@ suppressPackageStartupMessages({
 set.seed(SEED)
 
 # ------------------------------ Load data -----------------------------------
+occ <- read.csv(OCC_FILE)
+bg  <- read.csv(BG_FILE)
 
-occ <- read.csv(here::here("data", "processed", "occurrences_thinned.csv")) %>%
-  mutate(pa = 1)
-
-bg <- read.csv(here::here("data", "processed", "background_points.csv")) %>%
-  mutate(pa = 0)
-
-pts <- bind_rows(
-  occ %>% select(longitude, latitude, pa),
-  bg  %>% select(longitude, latitude, pa)
+stopifnot(
+  "Presence IDs are not unique"   = !anyDuplicated(occ$coordinate_id),
+  "Background IDs are not unique" = !anyDuplicated(bg$bg_id)
 )
 
-cat("Presences:", sum(pts$pa == 1),
-    "| Background:", sum(pts$pa == 0),
-    "| Total:", nrow(pts), "\n")
+pts <- bind_rows(
+  occ %>% transmute(pa = 1, id = coordinate_id, longitude, latitude),
+  bg  %>% transmute(pa = 0, id = bg_id,         longitude, latitude)
+)
+cat("Presences:", sum(pts$pa == 1), "| Background:", sum(pts$pa == 0), "\n")
 
 pts_sf <- st_as_sf(pts, coords = c("longitude", "latitude"), crs = 4326)
 
 # --------------------------- Load covariates --------------------------------
-
 retained_vars <- readRDS(file.path(DIR_MODELS, "retained_vars.rds"))
 cat("Retained:", paste(retained_vars, collapse = ", "), "\n")
 
 covs <- rast(file.path(DIR_COVARIATES, COV_FILES[retained_vars]))
 names(covs) <- retained_vars
 
-mask_r <- rast(file.path(DIR_COVARIATES, "ecological_mask_150mm.tif"))
-covs_masked <- mask(covs, mask_r, maskvalues = 0)
+covs_dom <- mask(covs, rast(DOMAIN_FILE), maskvalues = 0)
 
-cat("Stack:", nlyr(covs_masked), "layers at", res(covs_masked)[1], "deg\n")
+cat("Stack:", nlyr(covs_dom), "layers at", res(covs_dom)[1], "deg\n")
 
 # ----------------------- Autocorrelation range ------------------------------
-# Empirical variograms for each retained covariate. The median range informs
-# the minimum block size for spatial independence.
+# Empirical variograms for each retained covariate, reported for context.
+# Block size is set by fold balance (params.R): ranges for covariates that
+# vary as regional gradients do not define a feasible independence distance.
 
-sac <- cv_spatial_autocor(r = covs_masked, num_sample = 5000)
+set.seed(SEED)
+sac <- cv_spatial_autocor(r = covs_dom, num_sample = SAC_SAMPLE_N)
 
 ranges_km <- sac$range_table$range / 1000
 names(ranges_km) <- sac$range_table$layers
@@ -75,51 +66,47 @@ cat("Per-covariate autocorrelation ranges (km):\n")
 print(round(sort(ranges_km)))
 cat("\nMedian:", round(median(ranges_km)), "km\n")
 
-# ------------------------------ Assign folds --------------------------------
-# 100 km blocks, k=4, random assignment with 200 iterations for best balance.
-# Median autocorrelation range is 706 km, but blocks at that scale produce
-# severely imbalanced folds because most presences cluster in the Gedaref
-# corridor. 100 km is a pragmatic compromise: enough blocks to distribute
-# presences across folds while still grouping nearby points together.
-#
-# The fold object is committed to the repo so that cloning reproduces
-# the exact CV metrics reported in the dissertation. Delete the file to
-# regenerate from scratch — results will differ slightly because
-# cv_spatial's random block-to-fold assignment is sensitive to R's
-# global RNG state, which varies across sessions and platforms even
-# with the same seed parameter. The spatial structure and balance
-# will be comparable; only the specific fold membership changes.
+# ------------------------ Block size vs balance -----------------------------
+# Presence balance across folds at each candidate block size.
 
-folds_path <- file.path(DIR_MODELS, "spatial_cv_folds.rds")
-
-if (file.exists(folds_path)) {
-  cat("Loading existing fold assignments from", folds_path, "\n")
-  folds <- readRDS(folds_path)
-} else {
-  folds <- cv_spatial(
-    x         = pts_sf,
-    column    = "pa",
-    size      = BLOCK_SIZE_M,
-    k         = K_FOLDS,
-    hexagon   = FALSE,
-    selection = "random",
-    iteration = 200,
-    seed      = 1238L # selected for fold balance
-  )
-
-  saveRDS(folds, folds_path)
-  cat("Generated and saved new fold assignments\n")
+for (km in BLOCK_TEST_KM) {
+  f <- tryCatch(
+    cv_spatial(x = pts_sf, column = "pa", size = km * 1000, k = K_FOLDS,
+               hexagon = FALSE, selection = "random", iteration = FOLD_ITER,
+               seed = SEED, plot = FALSE, report = FALSE, progress = FALSE),
+    error = function(e) NULL)
+  if (is.null(f)) {
+    cat(sprintf("  %4d km: could not form %d folds\n", km, K_FOLDS)); next
+  }
+  n <- table(factor(f$folds_ids[pts$pa == 1], levels = seq_len(K_FOLDS)))
+  cat(sprintf("  %4d km: test presences per fold %s\n", km, paste(n, collapse = " / ")))
 }
 
-cat("\nFinal configuration:\n")
-cat("  Block size:", BLOCK_SIZE_M / 1000, "km\n")
-cat("  Folds:", folds$k, "\n")
-cat("  Selection: random (200 iterations)\n\n")
-cat("Per-fold balance:\n")
+# ------------------------------ Assign folds --------------------------------
+# cv_spatial keeps the most balanced of FOLD_ITER random block-to-fold
+# assignments. Regenerated every run from the current points.
+
+folds <- cv_spatial(
+  x = pts_sf, column = "pa", size = BLOCK_SIZE_M, k = K_FOLDS,
+  hexagon = FALSE, selection = "random", iteration = FOLD_ITER, seed = SEED
+)
+stopifnot("Fold vector does not match the points" =
+  length(folds$folds_ids) == nrow(pts) && !anyNA(folds$folds_ids))
+
+fold_table <- pts %>% select(pa, id) %>% mutate(fold = folds$folds_ids)
+saveRDS(fold_table, FOLD_TABLE_FILE)
+saveRDS(folds, FOLDS_FILE)
+
+cat("Block size:", BLOCK_SIZE_M / 1000, "km | folds:", K_FOLDS,
+    "| iterations:", FOLD_ITER, "\n")
 print(folds$records)
 
-# ------------------------------- Fold map -----------------------------------
+test_pres <- table(factor(fold_table$fold[fold_table$pa == 1], levels = seq_len(K_FOLDS)))
+cat("Test presences per fold:", test_pres, "\n")
+stopifnot("A fold has fewer than MIN_TEST_PRES test presences" =
+  min(test_pres) >= MIN_TEST_PRES)
 
+# ------------------------------- Fold map -----------------------------------
 pts_sf$fold <- folds$folds_ids
 
 pres_sf <- pts_sf[pts_sf$pa == 1, ]
@@ -127,15 +114,16 @@ bg_sf   <- pts_sf[pts_sf$pa == 0, ]
 
 p <- ggplot() +
   geom_sf(data = folds$blocks, fill = NA, colour = "grey60", linewidth = 0.3) +
+  geom_sf(data = sf::st_as_sf(vect(ADM0_FILE)), fill = NA, colour = "grey30") +
   geom_sf(data = bg_sf, aes(colour = factor(fold)),
           size = 0.3, alpha = 0.15) +
   geom_sf(data = pres_sf, aes(colour = factor(fold)),
           size = 2, shape = 17) +
   scale_colour_brewer(palette = "Set1", name = "Fold") +
   labs(title = "Spatial block CV fold assignment",
-       subtitle = paste0("100 km blocks, k = 4 | ",
-                         sum(pts_sf$pa == 1), " presences, ",
-                         sum(pts_sf$pa == 0), " background")) +
+       subtitle = paste0(BLOCK_SIZE_M / 1000, " km blocks, k = ", K_FOLDS, " | ",
+                  sum(pts_sf$pa == 1), " presences, ",
+                  sum(pts_sf$pa == 0), " background")) +
   theme_minimal() +
   theme(legend.position = "right")
 
@@ -144,12 +132,5 @@ ggsave(file.path(DIR_FIGS, "spatial_cv_fold_map.pdf"), p,
 ggsave(file.path(DIR_FIGS, "spatial_cv_fold_map.png"), p,
        width = 8, height = 6, dpi = 300)
 cat("Saved fold map\n")
-
-# --------------------------------- Summary ----------------------------------
-
-cat("Fold object:", file.path(DIR_MODELS, "spatial_cv_folds.rds"), "\n")
-cat("Contains:", length(folds$folds_list), "folds\n")
-cat("Fold sizes (test presences):",
-    sapply(folds$folds_list, function(f) sum(pts_sf$pa[f[[2]]] == 1)), "\n")
 
 cat("05_spatial_cv_folds.R complete\n")

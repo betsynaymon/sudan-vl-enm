@@ -1,12 +1,13 @@
 # ============================================================================
 # 04_background_sampling.R
-# Samples uniform-random background points within the ecological mask and
-# assigns each a year drawn from the occurrence-year distribution for
-# year-matched covariate extraction downstream.
+# Samples uniform-random background cells from the study domain, restricted
+# to cells with complete values for the retained covariates, and assigns each
+# a year drawn from the occurrence-year distribution for year-matched
+# extraction downstream.
 #
-# Inputs:  data/processed/occurrences_thinned.csv
-#          data/raw/ecological_mask_150mm.tif
-# Outputs: data/processed/background_points.csv
+# Inputs:  OCC_FILE, DOMAIN_FILE, ADM0_FILE, SENS_MASK_FILE,
+#          retained_vars.rds, COV_FILES
+# Outputs: BG_FILE
 #          outputs/figures/background_vs_occurrences.png
 # ============================================================================
 
@@ -20,7 +21,7 @@ suppressPackageStartupMessages({
 
 # ------------------------------ Load inputs ---------------------------------
 
-occ <- read.csv(here::here("data", "processed", "occurrences_thinned.csv"))
+occ <- read.csv(OCC_FILE)
 cat("Occurrence records:", nrow(occ), "\n")
 
 stopifnot(
@@ -28,27 +29,37 @@ stopifnot(
     nrow(occ) > 0
 )
 
-# Ecological mask: 1 = inside study area, 0 = excluded
-mask <- rast(file.path(DIR_COVARIATES, "ecological_mask_150mm.tif"))
-mask <- subst(mask, 0, NA)
-cat("Mask cells (valid):", global(mask, fun = "notNA") %>% pull(notNA), "\n")
+retained_vars <- readRDS(file.path(DIR_MODELS, "retained_vars.rds"))
+covs   <- rast(file.path(DIR_COVARIATES, COV_FILES[retained_vars]))
+domain <- rast(DOMAIN_FILE)
+
+# Sampling surface: domain cells with every retained long-term covariate.
+# Cells with a missing covariate (mostly coastline) cannot serve as background.
+in_domain <- values(domain, mat = FALSE) == 1
+avail     <- in_domain & complete.cases(values(covs))
+cat("Domain cells:", sum(in_domain), "| available for background:", sum(avail), "\n")
+
+# Presences must lie where background can be drawn; otherwise the model
+# contrasts them with an area they are not part of.
+occ_cells <- cellFromXY(domain, as.matrix(occ[, c("longitude", "latitude")]))
+stopifnot(
+  "A presence falls outside the covariate grid"   = !anyNA(occ_cells),
+  "A presence falls outside the sampling surface" = all(avail[occ_cells])
+)
 
 # -------------------------- Sample background -------------------------------
-
 set.seed(SEED)
+bg_cells <- sample(which(avail), N_BACKGROUND)   # without replacement: one point per cell
+bg <- as.data.frame(xyFromCell(domain, bg_cells))
+names(bg) <- c("longitude", "latitude")
+bg <- data.frame(bg_id = seq_len(nrow(bg)), bg)
 
-bg_pts <- spatSample(mask, size = N_BACKGROUND, method = "random",
-                     na.rm = TRUE, as.points = TRUE)
+stopifnot("Background count differs from N_BACKGROUND" = nrow(bg) == N_BACKGROUND)
 
-bg <- as.data.frame(bg_pts, geom = "XY") %>%
-  rename(longitude = x, latitude = y) %>%
-  select(longitude, latitude)
-
-cat("Background points sampled:", nrow(bg), "\n")
-
-stopifnot(
-  "Background sample is empty — check mask" = nrow(bg) > 0
-)
+# Background where the presences are 
+sens <- values(rast(SENS_MASK_FILE), mat = FALSE)
+cat("Background in the >= 150 mm part of the domain:",
+    sum(sens[bg_cells] %in% 1), "of", N_BACKGROUND, "\n")
 
 # Assign years weighted by occurrence-year distribution
 year_weights <- occ %>% count(year, name = "weight")
@@ -64,18 +75,16 @@ left_join(occ_pct, bg_pct, by = "year", suffix = c("_occ", "_bg")) %>%
   as.data.frame() %>% print()
 
 # ----------------------------- Save and map ---------------------------------
-
-dir.create(here::here("data", "processed"), showWarnings = FALSE, recursive = TRUE)
-write.csv(bg, here::here("data", "processed", "background_points.csv"),
-          row.names = FALSE)
+write.csv(bg, BG_FILE, row.names = FALSE)
 cat("Saved", nrow(bg), "background points\n")
 
 p <- ggplot() +
+  geom_sf(data = sf::st_as_sf(vect(ADM0_FILE)), fill = NA, colour = "grey30") +
   geom_point(data = bg, aes(longitude, latitude),
              colour = "grey70", size = 0.3, alpha = 0.3) +
   geom_point(data = occ, aes(longitude, latitude),
              colour = "firebrick", size = 1.5) +
-  coord_fixed() +
+  coord_sf() +
   labs(title = paste0("Background (n=", nrow(bg),
                       ") and occurrences (n=", nrow(occ), ")"),
        x = "Longitude", y = "Latitude") +
