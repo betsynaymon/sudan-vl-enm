@@ -3,6 +3,37 @@
 # Shared functions, sourced after params.R. 
 # ============================================================================
 
+# AUC for presences vs background, ties counted as half.
+auc_ties <- function(p_occ, p_bg) {
+  mean(outer(p_occ, p_bg, ">") + 0.5 * outer(p_occ, p_bg, "=="))
+}
+
+# Response curves: each covariate varied across the range of `env`, the
+# others held at `ref`. Binary covariates are evaluated at 0 and 1.
+response_curves <- function(mod, ref, env, vars, n = 200) {
+  do.call(rbind, lapply(vars, function(v) {
+    x <- if (all(env[[v]] %in% c(0, 1))) c(0, 1) else
+      seq(min(env[[v]]), max(env[[v]]), length.out = n)
+    nd <- as.data.frame(matrix(rep(ref, each = length(x)), ncol = length(ref),
+                               dimnames = list(NULL, names(ref))))
+    nd[[v]] <- x
+    data.frame(variable = v, value = x,
+               suit = as.numeric(predict(mod, nd, type = "cloglog", clamp = TRUE)))
+  }))
+}
+
+# Suitability over a grid of two covariates, the others held at `ref`.
+pair_surface <- function(mod, ref, env, x, y, n = 100) {
+  g <- expand.grid(seq(min(env[[x]]), max(env[[x]]), length.out = n),
+                   seq(min(env[[y]]), max(env[[y]]), length.out = n))
+  names(g) <- c(x, y)
+  nd <- as.data.frame(matrix(rep(ref, each = nrow(g)), ncol = length(ref),
+                             dimnames = list(NULL, names(ref))))
+  nd[[x]] <- g[[x]]; nd[[y]] <- g[[y]]
+  cbind(g, suit = as.numeric(predict(mod, nd, type = "cloglog", clamp = TRUE)))
+}
+
+
 # Year-matched covariate values for a point set (longitude, latitude, year).
 # Static covariates come from COV_FILES; dynamic ones from the annual raster
 # for each point's year. Points must lie in the domain, and by default every
@@ -60,7 +91,7 @@ eval_fold <- function(mod, test_occ, test_bg, train_occ) {
   p_bg  <- as.numeric(predict(mod, test_bg,   type = "cloglog"))
   p_tr  <- as.numeric(predict(mod, train_occ, type = "cloglog"))
 
-  auc <- mean(outer(p_occ, p_bg, ">") + 0.5 * outer(p_occ, p_bg, "=="))
+  auc <- auc_ties(p_occ, p_bg)
   cbi <- tryCatch(
     ecospat::ecospat.boyce(fit = c(p_occ, p_bg), obs = p_occ, nclass = 0,
                            window.w = "default", res = BOYCE_RES,

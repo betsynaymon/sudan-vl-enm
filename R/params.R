@@ -63,15 +63,17 @@ DOMAIN_FILE <- file.path(DIR_PROCESSED, "domain_sudan.tif")
 SENS_MASK_FILE <- file.path(DIR_RAW, "ecological_mask_150mm.tif")
 
 # ----- Study area -----
-# Sudan as administered: GADM minus the Egyptian-administered Halaib Triangle,
-# taken as land north of the 22nd parallel (the 1899 boundary) east of the
-# western vertex of GADM's Halayeb locality there. Matches WorldPop's
-# population surface. Built once in 01; other scripts read these files
-# instead of calling gadm().
-EXCLUDE_ADM2     <- "Halayeb"
-EXCLUDE_NORTH_OF <- 22
-ADM0_FILE <- file.path(DIR_PROCESSED, "study_adm0.gpkg")
-ADM1_FILE <- file.path(DIR_PROCESSED, "study_adm1.gpkg")
+# Modelled domain: Sudan (GADM) excluding the Halaib Triangle, for which
+# WorldPop assigns no population and covariate coverage is incomplete. The
+# Triangle is taken as land north of the 22nd parallel east of the western
+# vertex of GADM's Halayeb locality there. Maps show the full GADM boundary,
+# with the Triangle marked as not modelled.
+EXCLUDE_ADM2      <- "Halayeb"
+EXCLUDE_NORTH_OF  <- 22
+ADM0_FILE         <- file.path(DIR_PROCESSED, "study_adm0.gpkg")    # modelled domain
+ADM1_FILE         <- file.path(DIR_PROCESSED, "study_adm1.gpkg")
+DISPLAY_ADM0_FILE <- file.path(DIR_PROCESSED, "display_adm0.gpkg")  # full GADM outline (maps)
+EXCLUDED_FILE     <- file.path(DIR_PROCESSED, "excluded_area.gpkg") # Halaib Triangle (maps)
 
 
 # ----- Occurrence filtering -----
@@ -129,24 +131,38 @@ MODEL_FILE  <- file.path(DIR_MODELS, "maxent_final.rds")
 TRAIN_FILE  <- file.path(DIR_MODELS, "training_data.rds")
 TUNING_FILE <- file.path(DIR_MODELS, "selected_tuning.rds")
 
+SUIT_FILE      <- file.path(DIR_SURFACES, "maxent_suitability.tif")
+MESS_FILE      <- file.path(DIR_SURFACES, "mess_vs_presences.tif")
+MESS_VARS_FILE <- file.path(DIR_SURFACES, "mess_vs_presences_by_variable.tif")
 
 # ----- ENMeval -----
 ENM_FC    <- c("L", "LQ", "LQH", "LQHP")   # H-only removed: predict.maxnet fails on binary covariates
 ENM_RM <- c(seq(0.5, 4, by = 0.5), 5, 6, 8)   # extends well past the conventional range
 BOYCE_RES <- 100                            # ecospat.boyce resolution (06, 15)
 
-# Selection: highest mean validation CBI among configurations with
-# ecologically plausible response curves (checked in 07).
-# NULL = highest-CBI configuration. To override, set both and record why.
-# 06 writes the fitted choice to selected_tuning.rds; downstream reads that.
-SELECTED_FC <- NULL
-SELECTED_RM <- NULL
+# Plateau choice (06b): LQHP rm 4. It meets the plausibility criteria within
+# the presence range, has the higher within-belt CBI, and is the only
+# candidate whose rainfall response peaks and declines within the range of
+# the presence data, consistent with the upper rainfall limit reported for
+# P. orientalis (Gebre-Michael et al. 2004). Its steeper decline beyond the
+# wettest presences is shaped by clamping and is treated as extrapolation.
+SELECTED_FC <- "LQHP"
+SELECTED_RM <- 4
+
 
 # Underfitting check (06): configurations are also scored within the >= 150 mm
 # region. If a configuration beats the selected one on within-belt CBI by more
 # than one SE, selection moves to within-belt CBI, because the population
 # estimate depends on discrimination within the inhabited belt. Both metrics
 # are reported.
+
+# Choice within the plateau (07): LQHP rm 4 and rm 8 bracket it and differ in
+# within-belt CBI. If both have ecologically plausible response curves, prefer
+# the higher within-belt CBI, because the population estimate depends on
+# discrimination within the inhabited belt; otherwise prefer the plausible one.
+# The other is reported as a sensitivity estimate in 08. (Within-belt CBI was
+# introduced as a secondary criterion during analysis, in response to the
+# underfitting concern, and is reported as such.)
 
 # ----- Thresholds and importance -----
 OMISSION_Q <- 0.10   # p10: 10th percentile of training-presence predictions

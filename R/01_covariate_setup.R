@@ -142,6 +142,10 @@ stopifnot("Study area extends beyond the covariate grid" =
 writeVector(adm0, ADM0_FILE, overwrite = TRUE)
 writeVector(adm1, ADM1_FILE, overwrite = TRUE)
 
+# For maps: the full GADM outline, and the excluded area drawn as not modelled
+writeVector(adm0_gadm, DISPLAY_ADM0_FILE, overwrite = TRUE)
+writeVector(terra::intersect(adm0_gadm, excluded), EXCLUDED_FILE, overwrite = TRUE)
+
 # Domain raster: 1 inside, 0 outside. touches = TRUE keeps boundary cells,
 # as terra::mask() does with a polygon.
 domain <- rasterize(adm0, template, touches = TRUE, background = 0)

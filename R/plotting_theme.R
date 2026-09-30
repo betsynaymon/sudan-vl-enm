@@ -258,7 +258,16 @@ layer_occurrences <- function(data, mapping = aes(), size = 1.8,
           fill = fill, colour = colour, ...)
 }
 
-
+# Area outside the modelled domain (Halaib Triangle): grey, labelled at its
+# centroid
+layer_excluded <- function(data, label = "Halaib Triangle\n(not modelled)", size = 2) {
+  cen <- sf::st_coordinates(sf::st_centroid(sf::st_geometry(data)))
+  list(
+    ggplot2::geom_sf(data = data, fill = "grey80", colour = NA),
+    ggplot2::annotate("text", x = cen[1, "X"], y = cen[1, "Y"],
+                      label = label, size = size, lineheight = 0.9)
+  )
+}
 # ----------------------------------------------------------------------------
 # 8. SET DEFAULTS
 #    Automatically applied when this file is sourced.

@@ -1,34 +1,19 @@
 # ============================================================================
 # 07_model_visualization.R
-# Produces response curves, variable importance, the continuous suitability
-# surface, a Darfur zoom, and a MESS extrapolation check from the fitted
-# MaxEnt model.
+# Response curves, rainfall x night-temperature surface, environmental spread,
+# permutation importance, the suitability surface, and extrapolation relative
+# to the presences (MESS), for the model selected in 06.
 #
-# Expensive computations (prediction surface, MESS, permutation importance)
-# are cached to disk. To iterate on figures without recomputing, simply
-# rerun — cached results load instantly.
-#
-# Inputs:  outputs/models/maxent_final.rds
-#          outputs/models/selected_tuning.rds
-#          outputs/models/training_data.rds
-#          outputs/models/retained_vars.rds
-#          data/raw/ (LTM covariate rasters + ecological mask)
-#          data/processed/occurrences_thinned.csv
-# Outputs: outputs/surfaces/maxent_suitability.tif
-#          outputs/tables/permutation_importance.csv
-#          outputs/figures/response_curves.png
-#          outputs/figures/env_spread_density.png
-#          outputs/figures/variable_importance.png
-#          outputs/figures/maxent_suitability_map.pdf
-#          outputs/figures/maxent_suitability_map.png
-#          outputs/figures/suitability_darfur_zoom.png
-#          outputs/figures/mess_extrapolation.png
-#          outputs/tables/response_curve_features.csv
-#          outputs/tables/covariate_spread.csv
-#          outputs/tables/mess_by_variable.tif
+# Inputs:  MODEL_FILE, TUNING_FILE, TRAIN_FILE, retained_vars.rds, OCC_FILE,
+#          DOMAIN_FILE, ADM0_FILE, ADM1_FILE, SENS_MASK_FILE, COV_FILES
+# Outputs: SUIT_FILE, MESS_FILE, MESS_VARS_FILE
+#          outputs/tables/response_curve_features.csv, covariate_spread.csv,
+#                         permutation_importance.csv
+#          outputs/figures/ (curves, surfaces, maps)
 # ============================================================================
 
 source(here::here("R", "params.R"))
+source(here::here("R", "helpers.R"))
 
 suppressPackageStartupMessages({
   library(terra)
@@ -37,41 +22,44 @@ suppressPackageStartupMessages({
   library(ggplot2)
   library(tidyr)
   library(ggspatial)
-  library(rnaturalearth)
-  library(ecospat)
-  library(geodata)
   library(sf)
 })
 
 set.seed(SEED)
 
 # ------------------------------ Load inputs ---------------------------------
-
-occ <- read.csv(here::here("data", "processed", "occurrences_thinned.csv"))
-
-mod   <- readRDS(file.path(DIR_MODELS, "maxent_final.rds"))
-sel   <- readRDS(file.path(DIR_MODELS, "selected_tuning.rds"))
-train <- readRDS(file.path(DIR_MODELS, "training_data.rds"))
-
-occ_env   <- train$occ_env
-bg_env    <- train$bg_env
-occ_clean <- train$occ_clean
-
-cat("Selected config:", sel$fc, "rm =", sel$rm, "\n")
-cat("Model coefficients:", length(mod$betas), "\n")
-cat("Training presences:", nrow(occ_env),
-    "| Background:", nrow(bg_env), "\n")
-
+occ   <- read.csv(OCC_FILE)
+mod   <- readRDS(MODEL_FILE)
+sel   <- readRDS(TUNING_FILE)
+train <- readRDS(TRAIN_FILE)
 retained_vars <- readRDS(file.path(DIR_MODELS, "retained_vars.rds"))
+
+display <- st_as_sf(vect(DISPLAY_ADM0_FILE))
+excluded <- st_as_sf(vect(EXCLUDED_FILE))
+
+occ_env <- train$occ_env[, retained_vars]
+bg_env  <- train$bg_env[, retained_vars]
+env_all <- rbind(occ_env, bg_env)
+
+cat("Selected config:", sel$fc, "rm =", sel$rm, "| rule:", sel$rule, "\n")
+cat("Model features:", length(mod$betas), "\n")
+cat("Training presences:", nrow(occ_env), "| Background:", nrow(bg_env), "\n")
 
 covs <- rast(file.path(DIR_COVARIATES, COV_FILES[retained_vars]))
 names(covs) <- retained_vars
+covs_dom <- mask(covs, rast(DOMAIN_FILE), maskvalues = 0)
 
-mask_r <- rast(file.path(DIR_COVARIATES, "ecological_mask_150mm.tif"))
-covs_masked <- mask(covs, mask_r, maskvalues = 0)
+sudan  <- st_as_sf(vect(ADM0_FILE))
+states <- st_as_sf(vect(ADM1_FILE))
 
-adm0  <- gadm(country = "SDN", level = 0, path = here::here("data", "raw"))
-sudan <- st_as_sf(adm0)
+# Map extent from the study area, with a margin
+bb <- st_bbox(display)
+map_xlim <- c(bb[["xmin"]], bb[["xmax"]]) + c(-0.5, 0.5)
+map_ylim <- c(bb[["ymin"]], bb[["ymax"]]) + c(-0.5, 0.5)
+
+# Reference for curves and surfaces: the presence median. With the desert in
+# the background, the background median is a desert cell.
+ref <- sapply(occ_env, median)
 
 # Shared label mapping for figures
 var_labels <- c(
@@ -84,44 +72,25 @@ var_labels <- c(
 
 # ========================== RESPONSE CURVES =================================
 
-bg_medians <- apply(bg_env, 2, median)
-n_pts <- 200
+response_data <- response_curves(mod, ref, env_all, retained_vars) |>
+  mutate(var_label = factor(var_labels[variable], levels = var_labels))
 
-response_data <- bind_rows(lapply(retained_vars, function(var) {
-  if (var == "vertisols") {
-    newdata <- as.data.frame(t(replicate(2, bg_medians)))
-    newdata[[var]] <- c(0, 1)
-  } else {
-    newdata <- as.data.frame(t(replicate(n_pts, bg_medians)))
-    newdata[[var]] <- seq(min(bg_env[[var]]), max(bg_env[[var]]),
-                         length.out = n_pts)
-  }
-
-  newdata$suitability <- predict(mod, newdata, clamp = TRUE, type = "cloglog")
-
-  tibble(
-    variable = var,
-    value    = newdata[[var]],
-    suit     = as.numeric(newdata$suitability)
-  )
-}))
-
-response_data <- response_data |>
-  mutate(var_label = var_labels[variable],
-         var_label = factor(var_label, levels = var_labels))
+pres_range <- occ_env |> pivot_longer(everything(), names_to = "variable") |>
+  group_by(variable) |> summarise(lo = min(value), hi = max(value)) |>
+  mutate(var_label = factor(var_labels[variable], levels = var_labels))
 
 p_resp <- ggplot(response_data, aes(x = value, y = suit)) +
+  geom_rect(data = filter(pres_range, variable != "vertisols"),
+            aes(xmin = lo, xmax = hi, ymin = -Inf, ymax = Inf),
+            inherit.aes = FALSE, fill = "grey92") +
   geom_line(linewidth = 0.9, colour = "#2166AC") +
-  geom_point(data = response_data |> filter(variable == "vertisols"),
+  geom_point(data = filter(response_data, variable == "vertisols"),
              size = 3, colour = "#2166AC") +
   facet_wrap(~ var_label, scales = "free_x", nrow = 2) +
-  labs(x = NULL,
-       y = "Habitat suitability (cloglog)",
-       title = paste0("Marginal response curves \u2014 selected MaxEnt (",
-                      sel$fc, ", rm = ", sel$rm, ")"),
-       subtitle = "Each covariate varied across background range; others held at median") +
-  theme_minimal() +
-  theme(strip.text = element_text(face = "bold"))
+  labs(x = NULL, y = "Habitat suitability (cloglog)",
+       title = paste0("Response curves, selected MaxEnt (", sel$fc, ", rm = ", sel$rm, ")"),
+       subtitle = "Others at the presence median; grey = range of presences") +
+  theme_minimal() + theme(strip.text = element_text(face = "bold"))
 
 ggsave(file.path(DIR_FIGS, "response_curves.png"), p_resp,
        width = 10, height = 6, dpi = 300)
@@ -130,7 +99,7 @@ cat("Saved response_curves.png\n")
 # -------------- Response-curve features ----------
 # The text quotes positions read off these marginal curves: the LST-night
 # threshold, rainfall peak and decline, slope peak. Other covariates are held
-# at the background median, so x-positions are more robust than heights.
+# at the presence median, so x-positions are more robust than heights.
 #   rise_XX = lowest value where suitability reaches XX% of the curve's peak
 #   fall_XX = highest value where suitability is still at XX% of the peak
 
@@ -166,6 +135,22 @@ cat("Vertisols: suitability", round(vert$suit[vert$value == 0], 3),
 
 write.csv(resp_features, file.path(DIR_TABLES, "response_curve_features.csv"),
           row.names = FALSE)
+
+# ------------- Rainfall x night temperature (interaction) -------------------
+
+surf_rl <- pair_surface(mod, ref, env_all, "rainfall", "lst_night")
+p_rl <- ggplot(surf_rl, aes(rainfall, lst_night, fill = suit)) +
+  geom_raster() +
+  scale_fill_viridis_c(name = "Suitability", limits = c(0, 1)) +
+  geom_point(data = bg_env, aes(rainfall, lst_night), inherit.aes = FALSE,
+             colour = "grey80", size = 0.2, alpha = 0.15) +
+  geom_point(data = occ_env, aes(rainfall, lst_night), inherit.aes = FALSE,
+             shape = 21, fill = "white", size = 1.3) +
+  labs(x = var_labels[["rainfall"]], y = var_labels[["lst_night"]],
+       title = "Rainfall x night temperature, selected model",
+       subtitle = "Others at the presence median; white = presences, grey = background") +
+  theme_minimal()
+ggsave(file.path(DIR_FIGS, "rain_lst_surface.png"), p_rl, width = 6, height = 5, dpi = 300)
 
 # ======================= ENVIRONMENTAL SPREAD ===============================
 
@@ -226,65 +211,56 @@ write.csv(spread_q, file.path(DIR_TABLES, "covariate_spread.csv"),
 
 # ====================== PERMUTATION IMPORTANCE ==============================
 
-perm_path <- file.path(DIR_TABLES, "permutation_importance.csv")
+# In-sample AUC drop when one covariate is shuffled across presences and
+# background, over all of Sudan and within the >= 150 mm region. Over all of
+# Sudan importance mostly reflects belt vs desert; within the region it shows
+# what discriminates inside the belt.
 
-if (file.exists(perm_path)) {
-  cat("Loading cached permutation importance\n")
-  perm_df <- read.csv(perm_path)
-} else {
-  pred_occ <- predict(mod, occ_env, type = "cloglog") |> as.numeric()
-  pred_bg  <- predict(mod, bg_env, type = "cloglog") |> as.numeric()
-  baseline_auc <- mean(sapply(pred_occ, function(p) mean(p > pred_bg)))
-  cat("Baseline AUC:", round(baseline_auc, 4), "\n")
+sens_r  <- rast(SENS_MASK_FILE)
+occ_wet <- terra::extract(sens_r, as.matrix(train$occ_clean[, c("longitude", "latitude")]))[, 1] %in% 1
+bg_wet  <- terra::extract(sens_r, as.matrix(train$bg_clean[,  c("longitude", "latitude")]))[, 1] %in% 1
 
-  set.seed(SEED)
-  n_perm <- 50
-
-  perm_imp <- sapply(retained_vars, function(var) {
-    drops <- replicate(n_perm, {
-      occ_shuf <- occ_env
-      bg_shuf  <- bg_env
-      all_vals <- c(occ_env[[var]], bg_env[[var]])
-      shuffled <- sample(all_vals)
-      occ_shuf[[var]] <- shuffled[1:nrow(occ_env)]
-      bg_shuf[[var]]  <- shuffled[(nrow(occ_env) + 1):length(shuffled)]
-
-      p_occ <- predict(mod, occ_shuf, type = "cloglog") |> as.numeric()
-      p_bg  <- predict(mod, bg_shuf, type = "cloglog") |> as.numeric()
-
-      perm_auc <- mean(sapply(p_occ, function(p) mean(p > p_bg)))
-      baseline_auc - perm_auc
+perm_importance <- function(o, b) {
+  base <- auc_ties(as.numeric(predict(mod, o, type = "cloglog")),
+                   as.numeric(predict(mod, b, type = "cloglog")))
+  t(sapply(retained_vars, function(v) {
+    drops <- replicate(N_PERM, {
+      shuf <- sample(c(o[[v]], b[[v]]))
+      o2 <- o; b2 <- b
+      o2[[v]] <- shuf[seq_len(nrow(o))]
+      b2[[v]] <- shuf[-seq_len(nrow(o))]
+      base - auc_ties(as.numeric(predict(mod, o2, type = "cloglog")),
+                      as.numeric(predict(mod, b2, type = "cloglog")))
     })
     c(mean = mean(drops), sd = sd(drops))
-  })
-
-  perm_df <- as.data.frame(t(perm_imp)) |>
-    mutate(variable = retained_vars,
-           var_label = var_labels[variable]) |>
-    arrange(desc(mean))
-
-  write.csv(perm_df, perm_path, row.names = FALSE)
-  cat("Computed and saved permutation importance\n")
+  }))
 }
 
-cat("Permutation importance (AUC drop, 50 reps):\n")
-for (i in seq_len(nrow(perm_df))) {
-  cat("  ", perm_df$var_label[i], ":",
-      round(perm_df$mean[i], 4), "\u00b1",
-      round(perm_df$sd[i], 4), "\n")
-}
+set.seed(SEED); imp_all <- perm_importance(occ_env, bg_env)
+set.seed(SEED); imp_wet <- perm_importance(occ_env[occ_wet, ], bg_env[bg_wet, ])
+
+perm_df <- bind_rows(
+  data.frame(scope = "All Sudan",        variable = retained_vars, imp_all, row.names = NULL),
+  data.frame(scope = "Within >= 150 mm", variable = retained_vars, imp_wet, row.names = NULL)) |>
+  mutate(var_label = var_labels[variable])
+write.csv(perm_df, file.path(DIR_TABLES, "permutation_importance.csv"), row.names = FALSE)
+
+cat("\nPermutation importance (AUC drop,", N_PERM, "permutations):\n")
+perm_df |> mutate(across(c(mean, sd), ~ round(., 4))) |>
+  select(scope, variable, mean, sd) |> arrange(scope, desc(mean)) |> print()
 
 p_imp <- perm_df |>
-  mutate(var_label = factor(var_label, levels = rev(var_label))) |>
+  mutate(var_label = factor(var_label, levels = rev(var_labels))) |>
   ggplot(aes(x = mean, y = var_label)) +
   geom_point(size = 3, colour = "#2166AC") +
-  geom_errorbarh(aes(xmin = mean - sd, xmax = mean + sd),
-                 height = 0.2, colour = "#2166AC") +
+  geom_errorbar(aes(xmin = mean - sd, xmax = mean + sd),
+                width = 0.2, orientation = "y", colour = "#2166AC") +
+  facet_wrap(~ scope) +
   labs(x = "AUC drop (permutation importance)",
        y = NULL,
        title = paste0("Variable importance \u2014 selected MaxEnt (",
                       sel$fc, ", rm = ", sel$rm, ")"),
-       subtitle = "Mean \u00b1 SD across 50 permutations") +
+       subtitle = paste0("Mean \u00b1 SD across ", N_PERM, " permutations")) +
   theme_minimal()
 
 ggsave(file.path(DIR_FIGS, "variable_importance.png"), p_imp,
@@ -292,62 +268,25 @@ ggsave(file.path(DIR_FIGS, "variable_importance.png"), p_imp,
 cat("Saved variable_importance.png\n")
 
 # ======================= PREDICTION SURFACE =================================
+# Predicted over the domain: the same extent the model was calibrated on.
+pred_r <- terra::predict(covs_dom, mod, type = "cloglog", na.rm = TRUE)
+names(pred_r) <- "suitability"
+writeRaster(pred_r, SUIT_FILE, overwrite = TRUE)
 
-suit_path <- file.path(DIR_SURFACES, "maxent_suitability.tif")
-
-if (file.exists(suit_path)) {
-  cat("Loading cached suitability surface\n")
-  pred_r <- rast(suit_path)
-} else {
-  covs_sudan <- mask(covs, vect(sudan))
-  pred_r <- terra::predict(covs_sudan, mod, type = "cloglog", na.rm = TRUE)
-
-  writeRaster(pred_r, suit_path, overwrite = TRUE)
-  cat("Computed and saved suitability surface\n")
-}
-
-cat("Prediction surface:\n")
-cat("  Non-NA:", sum(!is.na(values(pred_r))), "\n")
-cat("  Range:", round(minmax(pred_r)[1], 4), "\u2013",
-    round(minmax(pred_r)[2], 4), "\n")
+n_pred <- global(!is.na(pred_r), "sum")[[1]]
+n_ok   <- global(!any(is.na(covs_dom)), "sum", na.rm = TRUE)[[1]]
+stopifnot("A complete domain cell has no prediction" = n_pred == n_ok)
+cat("Prediction surface:", n_pred, "cells | range",
+    paste(round(minmax(pred_r)[, 1], 4), collapse = " to "), "\n")
 
 pred_df <- as.data.frame(pred_r, xy = TRUE)
 names(pred_df) <- c("x", "y", "suitability")
 pred_df <- pred_df[!is.na(pred_df$suitability), ]
 
-p_suit <- ggplot() +
-  geom_sf(data = sudan, fill = "grey90", colour = "grey30", linewidth = 0.5) +
-  geom_raster(data = pred_df, aes(x = x, y = y, fill = suitability)) +
-  scale_fill_gradientn(
-    colours = c("#2166AC", "#67A9CF", "#D1E5F0", "#FDDBC7",
-                "#EF8A62", "#B2182B"),
-    na.value = "transparent",
-    name = "Habitat\nsuitability",
-    limits = c(0, 1)
-  ) +
-  geom_sf(data = sudan, fill = NA, colour = "grey30", linewidth = 0.5) +
-  geom_point(data = occ, aes(x = longitude, y = latitude),
-             colour = "black", fill = "white",
-             shape = 21, size = 1.5, stroke = 0.5) +
-  annotation_scale(location = "bl", width_hint = 0.2) +
-  annotation_north_arrow(location = "tr", which_north = "true",
-                         style = north_arrow_minimal()) +
-  #labs(title = paste0("VL habitat suitability \u2014 MaxEnt (",
-  #                   sel$fc, ", rm = ", sel$rm, ")"),
-  #     subtitle = "Continuous prediction across Sudan") +
-  coord_sf(xlim = c(21.5, 39), ylim = c(8.5, 23), crs = 4326) +
-  theme_minimal() +
-  theme(panel.grid = element_blank(),
-        axis.title = element_blank())
-
-ggsave(file.path(DIR_FIGS, "maxent_suitability_map.pdf"), p_suit,
-       width = 10, height = 8)
-ggsave(file.path(DIR_FIGS, "maxent_suitability_map.png"), p_suit,
-       width = 10, height = 8, dpi = 300)
 cat("Saved suitability map\n")
 
 # ============================ DARFUR ZOOM ===================================
-
+darfur <- states[grepl("Darfur", states$NAME_1), ]
 p_darfur <- ggplot() +
   geom_sf(data = sudan, fill = "grey90", colour = "grey30", linewidth = 0.5) +
   geom_raster(data = pred_df, aes(x = x, y = y, fill = suitability)) +
@@ -362,8 +301,9 @@ p_darfur <- ggplot() +
   geom_point(data = occ, aes(x = longitude, y = latitude),
              colour = "black", fill = "white",
              shape = 21, size = 3, stroke = 0.7) +
-  coord_sf(xlim = c(24, 28), ylim = c(11, 16), crs = 4326) +
-  labs(title = "Darfur / West Kordofan \u2014 zoomed",
+  coord_sf(xlim = st_bbox(darfur)[c("xmin", "xmax")],
+           ylim = st_bbox(darfur)[c("ymin", "ymax")], crs = 4326) +
+  labs(title = "Darfur states, zoomed",
        subtitle = "Presence points over suitability surface") +
   theme_minimal() +
   theme(panel.grid = element_blank(),
@@ -373,80 +313,29 @@ ggsave(file.path(DIR_FIGS, "suitability_darfur_zoom.png"), p_darfur,
        width = 8, height = 7, dpi = 300)
 cat("Saved suitability_darfur_zoom.png\n")
 
-# =============================== MESS ======================================
-
-mess_path <- file.path(DIR_SURFACES, "mess_surface.tif")
-
-if (file.exists(mess_path)) {
-  cat("Loading cached MESS surface\n")
-  mess_r <- rast(mess_path)
-} else {
-  ref_data <- rbind(occ_env[, retained_vars], bg_env[, retained_vars])
-  covs_sudan <- mask(covs, vect(sudan))
-  mess_r <- dismo::mess(x = raster::stack(covs_sudan), v = ref_data, full = FALSE)
-  mess_r <- rast(mess_r)
-
-  writeRaster(mess_r, mess_path, overwrite = TRUE)
-  cat("Computed and saved MESS surface\n")
-}
+# ============================ EXTRAPOLATION =================================
+# MESS against the presences (year-matched training values). The background
+# spans Sudan, so almost nothing is novel relative to presences plus
+# background; the informative question is whether a cell lies within the
+# range where presences support the fitted response.
+mess_full <- mask(rast(dismo::mess(x = raster::stack(covs_dom), v = occ_env, full = TRUE)),
+                  pred_r)
+names(mess_full) <- c(retained_vars, "mess")
+mess_r    <- mess_full[["mess"]]
+mess_vars <- mess_full[[retained_vars]]
+writeRaster(mess_r,    MESS_FILE,      overwrite = TRUE)
+writeRaster(mess_vars, MESS_VARS_FILE, overwrite = TRUE)
+stopifnot("MESS has values outside the complete domain cells" =
+  global(!is.na(mess_r), "sum")[[1]] == n_ok)
 
 mess_vals <- values(mess_r, na.rm = TRUE)
-cat("MESS summary:\n")
-cat("  Range:", round(min(mess_vals), 1), "to", round(max(mess_vals), 1), "\n")
-cat("  Novel environments (MESS < 0):",
-    sum(mess_vals < 0), "of", length(mess_vals),
-    "(", round(100 * sum(mess_vals < 0) / length(mess_vals), 1), "%)\n")
+cat("\nMESS vs presences: outside the presence range in", sum(mess_vals < 0), "of",
+    length(mess_vals), "cells (", round(100 * mean(mess_vals < 0), 1), "%)\n")
 
-mess_df <- as.data.frame(mess_r, xy = TRUE)
-names(mess_df) <- c("x", "y", "mess")
-mess_df <- mess_df[!is.na(mess_df$mess), ]
-mess_df$type <- ifelse(mess_df$mess < 0, "Extrapolation", "Interpolation")
+novel <- which(values(mess_r) < 0)
+lim   <- apply(values(mess_vars)[novel, , drop = FALSE], 1, which.min)
+cat("Limiting covariate among those cells:\n"); print(table(retained_vars[lim]))
 
-p_mess <- ggplot() +
-  geom_sf(data = sudan, fill = "grey90", colour = "grey30", linewidth = 0.5) +
-  geom_raster(data = mess_df, aes(x = x, y = y, fill = type)) +
-  scale_fill_manual(values = c(Extrapolation = "#D73027",
-                               Interpolation = "#4575B4"),
-                    name = NULL) +
-  geom_sf(data = sudan, fill = NA, colour = "grey30", linewidth = 0.5) +
-  geom_point(data = occ, aes(x = longitude, y = latitude),
-             colour = "white", fill = "black",
-             shape = 21, size = 1.5, stroke = 0.5) +
-  annotation_scale(location = "bl", width_hint = 0.2) +
-  coord_sf(xlim = c(21.5, 39), ylim = c(8.5, 23), crs = 4326) +
-  labs(title = "MESS: extrapolation risk",
-       subtitle = "Red = at least one covariate outside training range") +
-  theme_minimal() +
-  theme(panel.grid = element_blank(),
-        axis.title = element_blank())
-
-ggsave(file.path(DIR_FIGS, "mess_extrapolation.png"), p_mess,
-       width = 10, height = 8, dpi = 300)
-cat("Saved mess_extrapolation.png\n")
-
-# ========================= MESS BY VARIABLE ==================================
-# Per-covariate similarity scores (dismo::mess, full = TRUE). Used in 08 to
-# identify which covariate makes novel cells novel. Kept separate from the
-# overall MESS above, so that surface and its outputs are unchanged.
-
-mess_vars_path <- file.path(DIR_SURFACES, "mess_by_variable.tif")
-
-if (file.exists(mess_vars_path)) {
-  cat("Loading cached per-variable MESS\n")
-  mess_vars <- rast(mess_vars_path)
-} else {
-  ref_data_v   <- rbind(occ_env[, retained_vars], bg_env[, retained_vars])
-  covs_sudan_v <- mask(covs, vect(sudan))
-  mess_full    <- rast(dismo::mess(x = raster::stack(covs_sudan_v),
-                                   v = ref_data_v, full = TRUE))
-  names(mess_full) <- c(retained_vars, "mess")   # per-variable layers, then MESS
-
-  mess_vars <- mess_full[[retained_vars]]
-  writeRaster(mess_vars, mess_vars_path, overwrite = TRUE)
-  cat("Computed and saved per-variable MESS\n")
-}
-
-# Sanity check: the lowest per-variable score should equal the overall MESS
 mess_diff <- global(abs(min(mess_vars) - mess_r), "max", na.rm = TRUE)[[1]]
 cat("Max |min(per-variable) - overall MESS|:", signif(mess_diff, 3), "\n")
 
@@ -462,34 +351,23 @@ cat("Max |min(per-variable) - overall MESS|:", signif(mess_diff, 3), "\n")
 # =============================================================================
 
 library(patchwork)
-library(sf)
 source(here::here("R", "plotting_theme.R"))
- 
-# ---- State boundaries (GADM level 1) ----
-adm1   <- gadm(country = "SDN", level = 1, path = here::here("data", "raw"))
-states <- st_as_sf(adm1)
  
 # ---- Occurrences as sf (for geom_sf consistency) ----
 occ_sf <- st_as_sf(occ, coords = c("longitude", "latitude"), crs = 4326)
  
 # ---- Clip MESS to Sudan boundary  ----
-mess_r_clipped <- mask(mess_r, vect(sudan))
-mess_df_clipped <- as.data.frame(mess_r_clipped, xy = TRUE)
+mess_df_clipped <- as.data.frame(mess_r, xy = TRUE)
 names(mess_df_clipped) <- c("x", "y", "mess")
 mess_df_clipped <- mess_df_clipped[!is.na(mess_df_clipped$mess), ]
 mess_df_clipped$type <- ifelse(mess_df_clipped$mess < 0,
                                "Extrapolation", "Interpolation")
  
-# ---- Shared extent ----
-map_xlim <- c(21.5, 39)
-map_ylim <- c(8, 24.5)
- 
- 
 # ---------- Panel (a): Suitability surface -----------------------------------
- 
 p_suit_a <- ggplot() +
   geom_sf(data = sudan, fill = "grey95", colour = NA) +
   geom_raster(data = pred_df, aes(x = x, y = y, fill = suitability)) +
+  layer_excluded(excluded) +
   scale_fill_suitability() +
   guides(fill = guide_colourbar(
     barheight = unit(0.4, "cm"),
@@ -499,7 +377,7 @@ p_suit_a <- ggplot() +
     label.theme = element_text(size = 6)
   )) +
   layer_admin1(data = states, colour = "black", linewidth = 0.15) +
-  layer_country(data = sudan, colour = "black", linewidth = 0.3) +
+  layer_country(data = display, colour = "black", linewidth = 0.3) +
   geom_sf(data = occ_sf, shape = 21, size = 1.0, stroke = 0.3,
           fill = "white", colour = "black") +
   ggspatial::annotation_scale(
@@ -519,10 +397,10 @@ p_suit_a <- ggplot() +
  
  
 # ---------- Panel (b): MESS (interpolation vs. extrapolation) ----------------
- 
 p_mess_b <- ggplot() +
   geom_sf(data = sudan, fill = "grey95", colour = NA) +
   geom_raster(data = mess_df_clipped, aes(x = x, y = y, fill = type)) +
+  layer_excluded(excluded) +
   scale_fill_manual(values = pal_mess_binary, name = NULL) +
   guides(fill = guide_legend(
     keywidth  = unit(0.5, "cm"),
@@ -530,10 +408,10 @@ p_mess_b <- ggplot() +
     direction = "horizontal"
   )) +
   layer_admin1(data = states, colour = "black", linewidth = 0.15) +
-  layer_country(data = sudan, colour = "black", linewidth = 0.3) +
+  layer_country(data = display, colour = "black", linewidth = 0.3) +
   geom_sf(data = occ_sf, shape = 21, size = 1.0, stroke = 0.3,
           fill = "white", colour = "black") +
-  labs(title = "(b) MESS analysis") +
+  labs(title = "(b) Outside the presence range") +
   coord_sf(xlim = map_xlim, ylim = map_ylim, crs = 4326, expand = FALSE) +
   theme_map() +
   theme(
@@ -562,9 +440,10 @@ cat("Saved fig_suitability_mess\n")
 p_suit_full <- ggplot() +
   geom_sf(data = sudan, fill = "grey95", colour = NA) +
   geom_raster(data = pred_df, aes(x = x, y = y, fill = suitability)) +
+  layer_excluded(excluded) +
   scale_fill_suitability() +
   layer_admin1(data = states, colour = "black", linewidth = 0.15) +
-  layer_country(data = sudan, colour = "black", linewidth = 0.3) +
+  layer_country(data = display, colour = "black", linewidth = 0.3) +
   geom_sf(data = occ_sf, shape = 21, size = 1.5, stroke = 0.4,
           fill = "white", colour = "black") +
   add_scalebar() +
@@ -622,7 +501,8 @@ p5 <- make_response("rainfall")
 
 # Variable importance 
 p_imp_grid <- perm_df |>
-  mutate(var_label = factor(var_label, levels = rev(perm_df$var_label))) |>
+  filter(scope == "All Sudan") |>
+  mutate(var_label = factor(var_label, levels = rev(var_labels))) |>
   ggplot(aes(x = mean, y = var_label, colour = var_label)) +
   geom_segment(aes(x = mean - sd, xend = mean + sd, yend = var_label),
                linewidth = 0.5, show.legend = FALSE) +

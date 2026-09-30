@@ -202,6 +202,7 @@ cat("  AUC (mean ± sd):", round(best$auc.val.avg, 3), "±",
     round(best$auc.val.sd, 3), "\n")
 cat("  Omission (10p):", round(best$or.10p.avg, 3), "±",
     round(best$or.10p.sd, 3), "\n")
+cat("  Rule:", rule, "\n")
 
 # ----------------------------- Tuning figure --------------------------------
 
