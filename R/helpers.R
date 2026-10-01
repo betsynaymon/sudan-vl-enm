@@ -164,3 +164,21 @@ state_zones <- function(template) {
   z <- terra::rasterize(terra::vect(ADM1_FILE), template, field = "NAME_1", touches = TRUE)
   terra::mask(z, terra::rast(DOMAIN_FILE), maskvalues = 0)
 }
+
+# Weiss et al. (2018) travel time to the nearest city (minutes) on the grid of
+# `template`, masked to the domain: the surface 11, 12, 13 and 22 use.
+# method = "near" is for diagnosing gaps only.
+travel_time <- function(template, method = "bilinear") {
+  tt <- terra::resample(terra::rast(TT_FILE), template, method = method)
+  names(tt) <- "travel_time"
+  terra::mask(tt, terra::rast(DOMAIN_FILE), maskvalues = 0)
+}
+
+# Fold for new points (longitude, latitude) from the spatial blocks of 05: the
+# block containing each point, or the nearest block if none contains it.
+fold_from_blocks <- function(pts) {
+  blocks <- readRDS(FOLDS_FILE)$blocks
+  p <- sf::st_as_sf(pts, coords = c("longitude", "latitude"), crs = 4326)
+  p <- sf::st_transform(p, sf::st_crs(blocks))
+  blocks$folds[sf::st_nearest_feature(p, blocks)]
+}

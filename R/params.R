@@ -25,7 +25,12 @@ for (d in c(DIR_POP, DIR_PROCESSED, DIR_OUTPUTS, DIR_FIGS, DIR_TABLES,
 OCC_RAW_FILE <- file.path(DIR_RAW, "compiled_vl_presences.csv")
 OCC_FILE     <- file.path(DIR_PROCESSED, "occurrences_thinned.csv")   # written by 02
 BG_FILE      <- file.path(DIR_PROCESSED, "background_points.csv")     # written by 04
-TT_FILE      <- file.path(DIR_RAW, "weiss_travel_time.tif")           # downloaded by 11
+TT_FILE      <- file.path(DIR_RAW, "weiss_travel_time.tif") # downloaded by 11
+TT_URL <- paste0(
+  "https://data.malariaatlas.org/geoserver/Accessibility/ows?",
+  "service=WCS&version=2.0.1&request=GetCoverage&format=image/geotiff&",
+  "CoverageId=Accessibility__201501_Global_Travel_Time_to_Cities&",
+  "subset=Long(21.5,39)&subset=Lat(8.5,22.5)")
 POP_FILE     <- file.path(DIR_POP, "sdn_pop_2025_100m_constrained.tif") # downloaded by 08
 POP_URL <- paste0("https://data.worldpop.org/GIS/Population/Global_2015_2030/",
                   "R2025A/2025/SDN/v1/100m/constrained/sdn_pop_2025_CN_100m_R2025A_v1.tif")
@@ -188,7 +193,7 @@ N_PERM     <- 50     # permutation-importance repeats (07)
 # ----- Accessibility -----
 TT_REMOTE_MIN <- 300   # remoteness threshold, minutes to nearest city (22)
 
-# ----- Comparators (supplement) -----
+# ----- Comparators -----
 RF_NTREES     <- 1000                    # 09; mtry grid derived from retained vars
 GBT_LR        <- c(0.001, 0.005, 0.01)   # 17
 GBT_DEPTH     <- c(1, 3, 5)
@@ -198,5 +203,7 @@ GBT_BAG_FRAC  <- 0.75
 GBT_MIN_OBS   <- 10
 
 
-# ----- Null Model Test -----
-N_NULL <- 99        # randomizations 
+# ----- Null model test (13) -----
+N_NULL      <- 99      # iterations per null; smallest attainable p = 1 / (N_NULL + 1)
+N_NULL_POOL <- 50000   # candidate null presences per pool
+NULL_ALPHA  <- 0.05    # the accessibility null is beaten if p <= NULL_ALPHA

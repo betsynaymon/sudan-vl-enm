@@ -104,16 +104,17 @@ pal_occurrences <- c(
     "Vector"        = "#CC6677"   # rose
 )
 
-# — Diagnostic / two-group plots (accessibility bias, etc.) —
-pal_two_group <- c(
-    "Background"   = "#969696",    # grey
-    "Occurrences"  = "#C4666D"     # muted rose 
+# — Accessibility comparison (11) —
+pal_access <- c(
+    "Presences"                     = "#C4666D",   # muted rose
+    "Background"                    = "#969696",   # grey
+    "Background, in presence range" = "#4575B4"    # steel blue
 )
 
 # — Threshold reference lines —
 col_p10    <- "#4575B4"   # blue, liberal threshold
 col_maxsss <- "#A50026"   # dark red, conservative threshold
-
+col_observed <- "#A50026"   # observed statistic against a null distribution (13)
 
 # ----------------------------------------------------------------------------
 # 4. BASE THEME (non-map figures)

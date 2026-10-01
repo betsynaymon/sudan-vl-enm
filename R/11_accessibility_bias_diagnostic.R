@@ -1,135 +1,168 @@
 # ============================================================================
 # 11_accessibility_bias_diagnostic.R
-# Tests whether occurrence records are systematically biased toward accessible
-# areas by comparing Weiss et al. (2018) travel-time-to-city values at
-# occurrence vs. background locations. Establishes the empirical fact of the
-# bias, motivating the sampling bias correction (12) and accessibility-weighted
-# null model (13).
+# How much closer to cities are the presences than the places they are
+# compared with? Travel time to the nearest city (Weiss et al. 2018) at the
+# presences, by record type, against three references: the background (the
+# model's comparison set, which 12 and 13 reweight), background within the
+# presences' environmental range (MESS >= 0, which removes the remote
+# desert), and the people living within that range. Also reports gaps in the
+# travel-time surface, and how suitability co-varies with accessibility (the
+# confound 12 and 13 address).
 #
-# Inputs:  outputs/models/training_data.rds
-#          data/raw/weiss_travel_time.tif (downloaded via Malaria Atlas Project)
-# Outputs: outputs/figures/accessibility_bias_diagnostic.png
+# Inputs:  TRAIN_FILE, TT_FILE (downloaded once from TT_URL), ADM0_FILE,
+#          ADM1_FILE, DOMAIN_FILE, SUIT_FILE, MESS_FILE, POP_ALIGNED_FILE
+# Outputs: outputs/tables/accessibility_comparison.csv
+#          outputs/tables/travel_time_gaps_by_state.csv
+#          outputs/tables/suitability_travel_time_correlation.csv
+#          outputs/figures/accessibility_bias_diagnostic.png
 # ============================================================================
 
 source(here::here("R", "params.R"))
+source(here::here("R", "helpers.R"))
 source(here::here("R", "plotting_theme.R"))
 
 suppressPackageStartupMessages({
-  library(terra)
-  library(dplyr)
-  library(ggplot2)
-  library(httr)
+  library(terra); library(dplyr); library(ggplot2); library(httr)
 })
 
 # ------------------------------ Load inputs ---------------------------------
 
-train <- readRDS(file.path(DIR_MODELS, "training_data.rds"))
+train  <- readRDS(TRAIN_FILE)
+occ    <- train$occ_clean
+bg     <- train$bg_clean
+suit_r <- rast(SUIT_FILE)
+mess_r <- rast(MESS_FILE)
+pop    <- rast(POP_ALIGNED_FILE)
+cat("Presences:", nrow(occ), "| background:", nrow(bg), "\n")
 
-cat("Presences:", nrow(train$occ_clean), "\n")
-cat("Background:", nrow(train$bg_clean), "\n")
+# ------------------------- Travel-time surface ------------------------------
+# Raw input, downloaded once (not a cache of a derived output).
 
-# ---------------------- Load travel-time surface ----------------------------
-
-tt_path <- here::here("data", "raw", "weiss_travel_time.tif")
-
-if (!file.exists(tt_path)) {
-  wcs_url <- paste0(
-    "https://data.malariaatlas.org/geoserver/Accessibility/ows?",
-    "service=WCS&version=2.0.1&request=GetCoverage&format=image/geotiff&",
-    "CoverageId=Accessibility__201501_Global_Travel_Time_to_Cities&",
-    "subset=Long(21.5,39)&subset=Lat(8.5,22.5)"
-  )
-
-  response <- GET(
-    wcs_url,
-    user_agent("R - MSc dissertation, e.p.naymon@lse.ac.uk"),
-    write_disk(tt_path, overwrite = TRUE),
-    progress()
-  )
-  Sys.sleep(1)
+if (!file.exists(TT_FILE)) {
+  response <- GET(TT_URL, user_agent("R - MSc dissertation, e.p.naymon@lse.ac.uk"),
+                  write_disk(TT_FILE, overwrite = TRUE), progress())
   stopifnot("Travel-time download failed" = status_code(response) == 200)
-  cat("Downloaded:", basename(tt_path), "\n")
-} else {
-  cat("Travel-time raster already present\n")
 }
 
-tt_raw <- rast(tt_path)
+tt_raw <- rast(TT_FILE)
+e_tt   <- as.vector(ext(tt_raw))
+e_dom  <- as.vector(ext(vect(ADM0_FILE)))
+stopifnot(
+  "Travel-time CRS differs from the covariates" = same.crs(tt_raw, suit_r),
+  "Travel-time raster does not cover the domain" =
+    e_tt[["xmin"]] <= e_dom[["xmin"]] && e_tt[["xmax"]] >= e_dom[["xmax"]] &&
+    e_tt[["ymin"]] <= e_dom[["ymin"]] && e_tt[["ymax"]] >= e_dom[["ymax"]],
+  "MESS or population grid differs from the surface" =
+    compareGeom(suit_r, mess_r, stopOnError = FALSE) &&
+    compareGeom(suit_r, pop,    stopOnError = FALSE)
+)
+cat("Travel time:", ncol(tt_raw), "x", nrow(tt_raw), "at", res(tt_raw)[1], "deg | range",
+    paste(round(unlist(global(tt_raw, "range", na.rm = TRUE))), collapse = " to "), "min\n")
 
-cat("Dimensions:", ncol(tt_raw), "x", nrow(tt_raw), "\n")
-cat("Resolution:", res(tt_raw), "\n")
-cat("Range (minutes):", round(global(tt_raw, "min", na.rm = TRUE)[[1]]),
-    "\u2013", round(global(tt_raw, "max", na.rm = TRUE)[[1]]), "\n")
+tt <- travel_time(suit_r)
 
-# --------------------- Accessibility comparison -----------------------------
+# --------------------------------- Gaps -------------------------------------
+# Domain cells with a prediction but no travel time. Bilinear resampling
+# returns NA next to a missing cell; nearest-neighbour shows which gaps are
+# in the source grid.
 
-occ_pts <- vect(train$occ_clean, geom = c("longitude", "latitude"), crs = "EPSG:4326")
-bg_pts  <- vect(train$bg_clean,  geom = c("longitude", "latitude"), crs = "EPSG:4326")
+zones   <- state_zones(suit_r)
+gap     <- !is.na(suit_r) & is.na(tt)
+gap_src <- !is.na(suit_r) & is.na(travel_time(suit_r, method = "near"))
+gap_df  <- zonal(c(gap, gap_src, pop * gap), zones, fun = "sum", na.rm = TRUE)
+names(gap_df) <- c("state", "cells", "cells_in_source", "population")
+gap_df  <- gap_df |> filter(cells > 0) |> arrange(desc(population))
 
-tt_occ <- terra::extract(tt_raw, occ_pts)[, 2]
-tt_bg  <- terra::extract(tt_raw, bg_pts)[, 2]
+cat("\nDomain cells without travel time:", sum(gap_df$cells),
+    "| in the source grid:", sum(gap_df$cells_in_source),
+    "| population:", fmt(sum(gap_df$population)), "\n")
+print(mutate(gap_df, population = fmt(population)), row.names = FALSE)
 
-cat("\nTravel time to nearest city (minutes):\n")
-cat("At occurrences (n =", sum(!is.na(tt_occ)), "):\n")
-print(round(summary(tt_occ)))
-cat("\nAt background (n =", sum(!is.na(tt_bg)), "):\n")
-print(round(summary(tt_bg)))
+# -------------------------------- Points ------------------------------------
 
-wt <- wilcox.test(tt_occ, tt_bg, alternative = "two.sided")
-cat("\nWilcoxon rank-sum p-value:", format.pval(wt$p.value, digits = 3), "\n")
-cat("Median occ:", round(median(tt_occ, na.rm = TRUE)),
-    "| Median bg:", round(median(tt_bg, na.rm = TRUE)), "minutes\n")
+xy <- function(d) as.matrix(d[, c("longitude", "latitude")])
+occ$tt      <- terra::extract(tt, xy(occ))[, 1]
+bg$tt       <- terra::extract(tt, xy(bg))[, 1]
+bg$in_range <- terra::extract(mess_r, xy(bg))[, 1] >= 0
+stopifnot("A presence has no travel time"         = !anyNA(occ$tt),
+          "A background point has no MESS value"  = !anyNA(bg$in_range))
+cat("\nBackground points without travel time (excluded below):",
+    sum(is.na(bg$tt)), "of", nrow(bg), "\n")
 
-# ----------------------------- Density plot ---------------------------------
+v <- data.frame(tt = values(tt, mat = FALSE), suit = values(suit_r, mat = FALSE),
+                pop = values(pop, mat = FALSE), in_range = values(mess_r, mat = FALSE) >= 0)
+v <- v[!is.na(v$tt) & !is.na(v$suit), ]
+stopifnot("A predicted cell has no MESS value" = !anyNA(v$in_range))
 
-plot_df <- bind_rows(
-  data.frame(travel_time = tt_occ, group = "Occurrences"),
-  data.frame(travel_time = tt_bg,  group = "Background")
+# ------------------------------ Comparison ----------------------------------
+# Reading fixed before the run. p_presence_closer is the chance a presence is
+# closer to a city than a reference point (0.5 = no difference); 0.56 / 0.64
+# / 0.71 are the conventional small / medium / large benchmarks (Cohen's d
+# 0.2 / 0.5 / 0.8). Against background within the presence range, a medium
+# or larger effect means recording favours accessible places beyond the
+# desert's remoteness; a small one means the full-background contrast is
+# mostly the desert. A presence median near the population median means
+# records sit where people live.
+
+summ <- function(group, x, w = rep(1, length(x)), compare = FALSE) {
+  keep <- !is.na(x) & !is.na(w); x <- x[keep]; w <- w[keep]
+  o  <- order(x); cw <- cumsum(w[o]) / sum(w)
+  q  <- sapply(c(0.25, 0.5, 0.75), function(p) x[o][which(cw >= p)[1]])
+  data.frame(group = group, n = round(sum(w)), q25 = q[1], median = q[2], q75 = q[3],
+             pct_beyond_remote = 100 * sum(w[x > TT_REMOTE_MIN]) / sum(w),
+             p_presence_closer = if (compare) auc_ties(-occ$tt, -x) else NA_real_)
+}
+
+types <- sort(unique(occ$presence_type))
+comp <- bind_rows(
+  summ("Presences", occ$tt),
+  bind_rows(lapply(types, function(t)
+    summ(paste("Presences:", t), occ$tt[occ$presence_type == t]))),
+  summ("Background", bg$tt, compare = TRUE),
+  summ("Background, in presence range", bg$tt[bg$in_range], compare = TRUE),
+  summ("Population, in presence range", v$tt[v$in_range], w = v$pop[v$in_range])
 )
 
-p_acc <- ggplot(plot_df, aes(x = travel_time, fill = group)) +
-  geom_density(alpha = 0.5) +
-  scale_x_continuous(limits = c(0, quantile(tt_bg, 0.99, na.rm = TRUE))) +
-  scale_fill_manual(values = pal_two_group) +
-  labs(#title = "Distribution of geographic accessibility",
-      x = "Travel time to nearest city (minutes)",
-      y = "Relative density", fill = NULL) +
-  theme_dissertation() +
-  theme(legend.position = "bottom",
-        plot.title = element_text(hjust = 0.5))
+cat("\nTravel time to the nearest city (minutes); pct_beyond_remote = share beyond",
+    TT_REMOTE_MIN, "min; n = people for the population row\n")
+comp |> mutate(across(c(q25, median, q75), round),
+               pct_beyond_remote = round(pct_beyond_remote, 1),
+               p_presence_closer = round(p_presence_closer, 3)) |> print(row.names = FALSE)
+
+# --------------------- Suitability and accessibility ------------------------
+# Not a test of bias: the suitable belt is also the populated, connected one.
+# Describes the confound 12 and 13 address. Every cell, no sampling.
+
+rho <- c(domain            = cor(v$suit, v$tt, method = "spearman"),
+         in_presence_range = cor(v$suit[v$in_range], v$tt[v$in_range], method = "spearman"))
+cat("\nSpearman correlation, suitability vs travel time:\n"); print(round(rho, 3))
+
+# -------------------------------- Figure ------------------------------------
+
+plot_df <- bind_rows(
+  data.frame(group = "Presences", tt = occ$tt),
+  data.frame(group = "Background", tt = bg$tt),
+  data.frame(group = "Background, in presence range", tt = bg$tt[bg$in_range])
+) |> filter(!is.na(tt)) |> mutate(group = factor(group, levels = names(pal_access)))
+
+p_acc <- ggplot(plot_df, aes(tt, fill = group)) +
+  geom_density(alpha = 0.5, colour = NA) +
+  geom_vline(xintercept = TT_REMOTE_MIN, linetype = "dashed", colour = "grey40") +
+  scale_x_continuous(trans = "log1p", breaks = c(0, 10, 60, 300, 1440, 5000)) +
+  scale_fill_manual(values = pal_access) +
+  labs(x = "Travel time to nearest city (minutes, log scale)", y = "Density", fill = NULL) +
+  theme(legend.position = "bottom")
 
 save_fig(file.path(DIR_FIGS, "accessibility_bias_diagnostic.png"), p_acc,
-       width = FIG_WIDTH_FULL, height = FIG_HEIGHT_PLOT)
-cat("Saved accessibility_bias_diagnostic.png\n")
+         width = FIG_WIDTH_FULL, height = FIG_HEIGHT_PLOT)
 
-# ------------------- Suitability-accessibility correlation ------------------
+# --------------------------------- Save -------------------------------------
 
-suit_r <- rast(file.path(DIR_SURFACES, "maxent_suitability.tif"))
+write.csv(comp,   file.path(DIR_TABLES, "accessibility_comparison.csv"), row.names = FALSE)
+write.csv(gap_df, file.path(DIR_TABLES, "travel_time_gaps_by_state.csv"), row.names = FALSE)
+write.csv(data.frame(scope = names(rho), spearman = rho),
+          file.path(DIR_TABLES, "suitability_travel_time_correlation.csv"), row.names = FALSE)
+cat("11_accessibility_bias_diagnostic.R complete\n")
 
-tt_aligned <- resample(tt_raw, suit_r, method = "bilinear")
 
-set.seed(SEED)
-valid_cells <- which(!is.na(values(suit_r)) & !is.na(values(tt_aligned)))
-samp_idx <- sample(valid_cells, min(50000, length(valid_cells)))
 
-rho <- cor(values(suit_r)[samp_idx],
-           values(tt_aligned)[samp_idx],
-           method = "spearman")
-
-cat("\nSuitability-accessibility correlation (Spearman, 50k sample):",
-    round(rho, 3), "\n")
-
-# Same correlation restricted to the ecological mask (excludes the hyper-arid
-# north, which is both remote and unsuitable and inflates the national figure)
-mask_r <- rast(file.path(DIR_COVARIATES, "ecological_mask_150mm.tif"))
-stopifnot(compareGeom(mask_r, suit_r, stopOnError = FALSE))
-
-valid_in <- which(!is.na(values(suit_r)) & !is.na(values(tt_aligned)) &
-                  values(mask_r) == 1)
-set.seed(SEED)
-samp_in <- sample(valid_in, min(50000, length(valid_in)))
-rho_in  <- cor(values(suit_r)[samp_in], values(tt_aligned)[samp_in],
-               method = "spearman")
-
-cat("Within ecological mask (Spearman, 50k sample):", round(rho_in, 3), "\n")
-
-cat("\n11_accessibility_bias_diagnostic.R complete\n")
