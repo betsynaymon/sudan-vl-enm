@@ -1,664 +1,235 @@
 # ============================================================================
 # 12_sampling_bias_robustness.R
-# Resamples background proportional to accessibility (Weiss et al. 2018
-# travel-time surface), refits MaxEnt, and compares to the uniform-background
-# model. Tests both sqrt and log bias transforms for robustness. 
+# Does handling sampling bias change the surface and the estimate? Refits the
+# selected model with the background drawn in proportion to accessibility,
+# (1 + travel time)^-b, so presences and background share the bias, at two
+# strengths: b = 0.5 (the dissertation's weighting) and b matched so the
+# background is as close to cities as the presences (the calibration of 13).
+# Matching treats all of the presences' extra accessibility as sampling bias,
+# so it is an upper bound on the correction: it also removes any ecological
+# association with accessibility. The uniform background (06) runs through
+# the same code and must reproduce 06 and 07.
 #
-# Inputs:  outputs/models/training_data.rds
-#          outputs/models/spatial_cv_folds.rds
-#          outputs/models/maxent_final.rds
-#          outputs/models/retained_vars.rds
-#          outputs/surfaces/maxent_suitability.tif
-#          outputs/surfaces/worldpop_2025_aligned.tif
-#          outputs/tables/arp_summary.csv
-#          data/raw/weiss_travel_time.tif
-#          data/raw/ecological_mask_150mm.tif
-#          data/processed/occurrences_thinned.csv
-#          R/extract_year_matched.R
-
-# Outputs: outputs/models/maxent_biased_background.rds
-#          outputs/models/maxent_log_bias_background.rds
-#          outputs/surfaces/maxent_suitability_biased_bg.tif
+# Inputs:  TRAIN_FILE, TUNING_FILE, MODEL_FILE, SUIT_FILE, POP_ALIGNED_FILE,
+#          FOLDS_FILE, TT_FILE, DOMAIN_FILE, ADM1_FILE, DISPLAY_ADM0_FILE,
+#          SENS_MASK_FILE, retained_vars.rds, arp_plateau_candidates.csv (08),
+#          covariate rasters (COV_FILES, COV_ANNUAL)
+# Outputs: BIAS_SURFACES_FILE (layers: uniform, half, matched)
 #          outputs/tables/bias_correction_summary.csv
-#          outputs/tables/arp_by_state_bias_comparison.csv
-#          outputs/figures/suitability_biased_bg.png
+#          outputs/tables/bias_correction_by_state.csv
 #          outputs/figures/response_curves_bias_comparison.png
-#          outputs/tables/bias_correction_by_extent.csv
-#          outputs/tables/arp_by_state_bias_both_extents.csv
+#          outputs/figures/fig_bias_comparison.png / .pdf
 # ============================================================================
 
 source(here::here("R", "params.R"))
-source(here::here("R", "extract_year_matched.R"))
+source(here::here("R", "helpers.R"))
+source(here::here("R", "plotting_theme.R"))
 
 suppressPackageStartupMessages({
-  library(terra)
-  library(sf)
-  library(dplyr)
-  library(maxnet)
-  library(ecospat)
-  library(ggplot2)
-  library(ggspatial)
-  library(rnaturalearth)
-  library(geodata)
+  library(terra); library(sf); library(dplyr); library(maxnet)
+  library(ggplot2); library(patchwork)
 })
 
 # ------------------------------ Load inputs ---------------------------------
 
-train   <- readRDS(file.path(DIR_MODELS, "training_data.rds"))
-folds   <- readRDS(file.path(DIR_MODELS, "spatial_cv_folds.rds"))
-suit_mx <- rast(file.path(DIR_SURFACES, "maxent_suitability.tif"))
+train   <- readRDS(TRAIN_FILE)
+tuning  <- readRDS(TUNING_FILE)
+mod     <- readRDS(MODEL_FILE)
 vars    <- readRDS(file.path(DIR_MODELS, "retained_vars.rds"))
-mod     <- readRDS(file.path(DIR_MODELS, "maxent_final.rds"))
-tuning  <- readRDS(file.path(DIR_MODELS, "selected_tuning.rds"))
-tt_raw  <- rast(here::here("data", "raw", "weiss_travel_time.tif"))
-mask_r  <- rast(file.path(DIR_COVARIATES, "ecological_mask_150mm.tif"))
+suit_r  <- rast(SUIT_FILE)
+pop     <- rast(POP_ALIGNED_FILE)
+cand_08 <- read.csv(file.path(DIR_TABLES, "arp_plateau_candidates.csv"))
+occ     <- train$occ_clean
+bg      <- train$bg_clean
+occ_env <- train$occ_env[, vars]
+bg_env  <- train$bg_env[, vars]
+cat("Model:", tuning$fc, "rm =", tuning$rm, "| presences:", nrow(occ),
+    "| background:", nrow(bg), "\n")
 
-best_classes <- tolower(tuning$fc)
+# ------------------------- Corrected backgrounds ----------------------------
+# Frame: domain cells with every long-term covariate (04). Cells without travel
+# time get weight 0 (no fill; 11). Drawn with draw_points(): with replacement,
+# years from the presences' distribution, folds from 05's blocks.
 
-cat("Presences:", nrow(train$occ_env), "\n")
-cat("Original background:", nrow(train$bg_env), "\n")
-cat("Tuning:", tuning$fc, "rm =", tuning$rm, "\n")
+covs    <- domain_covs(vars)
+frame   <- !any(is.na(covs))
+frame   <- mask(frame, frame, maskvalues = 0)
+tt      <- travel_time(frame)
+cells   <- which(!is.na(values(frame, mat = FALSE)))
+tt_c    <- values(tt, mat = FALSE)[cells]
+has_tt  <- !is.na(tt_c)
+occ_tt  <- terra::extract(tt, as.matrix(occ[, c("longitude", "latitude")]))[, 1]
+b_match <- tt_exponent(tt_c, median(occ_tt))
+cat("Frame cells:", length(cells), "| matched b =", b_match, "\n")
 
-# -------------------- Bias surface and resample -----------------------------
+year_w  <- table(occ$year)
+draw_bg <- function(b, seed)
+  draw_points(frame, cells, N_BACKGROUND, ifelse(has_tt, (1 + tt_c)^(-b), 0),
+              year_w, vars, seed)
 
-tt_aligned <- resample(tt_raw, mask_r, method = "bilinear")
-
-# Bias weight: inverse sqrt of travel time (accessible = high weight)
-bias_r <- 1 / sqrt(1 + tt_aligned)
-mask_r <- subst(mask_r, 0, NA)
-bias_r <- mask(bias_r, mask_r)
-
-cat("Bias weight range:", round(global(bias_r, "min", na.rm = TRUE)[[1]], 4),
-    "\u2013", round(global(bias_r, "max", na.rm = TRUE)[[1]], 4), "\n")
-
-set.seed(SEED)
-bg_biased <- spatSample(bias_r, size = N_BACKGROUND, method = "weights",
-                        na.rm = TRUE, as.points = TRUE)
-
-bg_biased_df <- as.data.frame(bg_biased, geom = "XY") |>
-  rename(longitude = x, latitude = y) |>
-  select(longitude, latitude)
-
-cat("Biased background sampled:", nrow(bg_biased_df), "\n")
-
-# Assign years from occurrence-year distribution
-year_weights <- train$occ_clean |> count(year, name = "weight")
-bg_biased_df$year <- sample(year_weights$year, size = nrow(bg_biased_df),
-                            replace = TRUE, prob = year_weights$weight)
-
-# Accessibility comparison
-tt_orig   <- terra::extract(tt_raw, vect(train$bg_clean, geom = c("longitude", "latitude"),
-                                         crs = "EPSG:4326"))[, 2]
-tt_biased <- terra::extract(tt_raw, vect(bg_biased_df, geom = c("longitude", "latitude"),
-                                         crs = "EPSG:4326"))[, 2]
-
-cat("\nBackground accessibility comparison:\n")
-cat("Original  \u2014 median:", round(median(tt_orig, na.rm = TRUE)), "min\n")
-cat("Biased    \u2014 median:", round(median(tt_biased, na.rm = TRUE)), "min\n")
-
-# ------------------- Extract covariates and refit ---------------------------
-
-cov_stack_mean <- rast(file.path(DIR_COVARIATES, COV_FILES[vars]))
-names(cov_stack_mean) <- vars
-
-bg_biased_env <- extract_year_matched(bg_biased_df, vars, mask_r)
-
-complete <- complete.cases(bg_biased_env)
-bg_biased_env <- bg_biased_env[complete, ]
-bg_biased_df  <- bg_biased_df[complete, ]
-cat("Biased background after NA drop:", nrow(bg_biased_env), "\n")
-
-cat("Rainfall at background — primary vs corrected:\n")
-print(rbind(primary   = summary(train$bg_env$rainfall),
-            corrected = summary(bg_biased_env$rainfall)))
-
-p_mat <- as.matrix(train$occ_env[, vars])
-b_mat <- as.matrix(bg_biased_env[, vars])
-
-mod_biased <- maxnet(
-  p    = c(rep(1, nrow(p_mat)), rep(0, nrow(b_mat))),
-  data = as.data.frame(rbind(p_mat, b_mat)),
-  f    = maxnet.formula(
-    p    = c(rep(1, nrow(p_mat)), rep(0, nrow(b_mat))),
-    data = as.data.frame(rbind(p_mat, b_mat)),
-    classes = best_classes
-  ),
-  regmult = tuning$rm
+bgs <- list(
+  uniform = list(env = bg_env, fold = bg$fold, dropped = 0,
+                 cell = cellFromXY(frame, as.matrix(bg[, c("longitude", "latitude")]))),
+  half    = draw_bg(0.5,     SEED + 2),
+  matched = draw_bg(b_match, SEED + 3)
 )
+bias_b      <- c(uniform = NA, half = 0.5, matched = b_match)
+bias_labels <- c(uniform = "Uniform background", half = "Corrected, b = 0.5",
+                 matched = paste0("Corrected, as accessible as presences (b = ", b_match, ")"))
 
-cat("Biased-bg model:", sum(mod_biased$betas != 0), "non-zero /",
-    length(mod_biased$betas), "total coefficients\n")
-
-saveRDS(mod_biased, file.path(DIR_MODELS, "maxent_biased_background.rds"))
-
-# ----------------------- Spatial CV evaluation -------------------------------
-# Presences use the dedup-fixed fold vector; biased background gets fold
-# assignments via nearest-block matching (new points not in original fold set).
-
-occ_orig   <- read.csv(here::here("data", "processed", "occurrences_thinned.csv"))
-occ_keys   <- paste(round(occ_orig$longitude, 5), round(occ_orig$latitude, 5), occ_orig$year)
-train_keys <- paste(round(train$occ_clean$longitude, 5), round(train$occ_clean$latitude, 5), train$occ_clean$year)
-dedup_idx  <- which(!occ_keys %in% train_keys)
-
-pres_folds <- folds$folds_ids[-(dedup_idx)][1:nrow(train$occ_env)]
-
-# Assign biased background to nearest block
-bg_sf <- st_as_sf(bg_biased_df, coords = c("longitude", "latitude"), crs = 4326)
-nearest_idx <- st_nearest_feature(bg_sf, folds$blocks)
-bg_folds <- folds$blocks$folds[nearest_idx]
-
-df_biased <- bind_rows(
-  as.data.frame(train$occ_env[, vars]) |> mutate(pa = 1),
-  as.data.frame(bg_biased_env[, vars]) |> mutate(pa = 0)
-)
-df_biased$fold <- c(pres_folds, bg_folds)
-
-cat("NA folds:", sum(is.na(df_biased$fold)), "\n")
-cat("Presences per fold:", table(df_biased$fold[df_biased$pa == 1]), "\n")
-
-fold_cbi <- fold_auc <- numeric(4)
-
-for (k in 1:4) {
-  idx_train <- df_biased$fold != k
-  idx_test  <- df_biased$fold == k
-
-  p_tr <- as.matrix(df_biased[idx_train & df_biased$pa == 1, vars])
-  b_tr <- as.matrix(df_biased[idx_train & df_biased$pa == 0, vars])
-
-  mod_k <- maxnet(
-    p    = c(rep(1, nrow(p_tr)), rep(0, nrow(b_tr))),
-    data = as.data.frame(rbind(p_tr, b_tr)),
-    f    = maxnet.formula(
-      p    = c(rep(1, nrow(p_tr)), rep(0, nrow(b_tr))),
-      data = as.data.frame(rbind(p_tr, b_tr)),
-      classes = best_classes
-    ),
-    regmult = tuning$rm
-  )
-
-  test_data <- df_biased[idx_test, vars]
-  pred_test <- predict(mod_k, newdata = test_data, type = "cloglog")[, 1]
-
-  pres_pred <- pred_test[df_biased$pa[idx_test] == 1]
-  bg_pred   <- pred_test[df_biased$pa[idx_test] == 0]
-
-  boyce <- ecospat.boyce(fit = pred_test, obs = pres_pred,
-                         nclass = 0, PEplot = FALSE)
-  fold_cbi[k] <- boyce$cor
-
-  n1 <- length(pres_pred)
-  n0 <- length(bg_pred)
-  fold_auc[k] <- (sum(rank(c(pres_pred, bg_pred))[1:n1]) - n1 * (n1 + 1) / 2) / (n1 * n0)
+q3 <- function(x) paste(round(quantile(x, c(0.25, 0.5, 0.75), na.rm = TRUE)), collapse = " / ")
+cat("\nTravel time q25 / median / q75 (min). Presences:", q3(occ_tt), "\n")
+for (nm in names(bgs)) {
+  t_bg <- values(tt, mat = FALSE)[bgs[[nm]]$cell]
+  cat(sprintf("%-8s %d points, %d distinct cells, %d dropped | %s | P[presence closer] %.3f\n",
+              nm, nrow(bgs[[nm]]$env), length(unique(bgs[[nm]]$cell)), bgs[[nm]]$dropped,
+              q3(t_bg), auc_ties(-occ_tt, -t_bg[!is.na(t_bg)])))
 }
 
-cat("\nSpatial CV \u2014 biased background:\n")
-cat("CBI:", round(mean(fold_cbi, na.rm = TRUE), 3),
-    "\u00b1", round(sd(fold_cbi, na.rm = TRUE), 3), "\n")
-cat("AUC:", round(mean(fold_auc), 3),
-    "\u00b1", round(sd(fold_auc), 3), "\n")
+# -------------------------------- Refits ------------------------------------
+# Selected configuration; presences and their folds unchanged. CV scores each
+# model against its own background, so scores are not comparable across rows
+# (under the matched background they describe separating presences from
+# equally accessible places). Thresholds are taken against the uniform
+# background, so binary estimates share one reference.
 
-# ------------------- Predict and compare surfaces ---------------------------
+refits <- setNames(lapply(names(bgs), function(nm) {
+  r <- refit_maxnet(occ_env, bgs[[nm]]$env, occ$fold, bgs[[nm]]$fold, tuning$fc, tuning$rm)
+  r$thr  <- thresholds_from(as.numeric(predict(r$mod, occ_env, type = "cloglog")),
+                            as.numeric(predict(r$mod, bg_env,  type = "cloglog")))
+  r$surf <- terra::predict(covs, r$mod, type = "cloglog", na.rm = TRUE)
+  r$arp  <- arp_estimates(r$surf, pop, r$thr)
+  cat("  ", nm, ": ", length(r$mod$betas), " features\n", sep = "")
+  r
+}), names(bgs))
 
-suit_biased_path <- file.path(DIR_SURFACES, "maxent_suitability_biased_bg.tif")
-
-if (file.exists(suit_biased_path)) {
-  cat("Loading cached biased-bg surface\n")
-  suit_biased <- rast(suit_biased_path)
-} else {
-  cov_stack <- rast(file.path(DIR_COVARIATES, COV_FILES[vars]))
-  names(cov_stack) <- vars
-
-  suit_biased <- predict(cov_stack, mod_biased, type = "cloglog",
-                         clamp = TRUE, na.rm = TRUE)
-
-  writeRaster(suit_biased, suit_biased_path, overwrite = TRUE)
-  cat("Computed and saved biased-bg surface\n")
-}
-
-# Mask both to ecological mask for comparison
-suit_mx_masked     <- mask(suit_mx, mask_r)
-suit_biased_masked <- mask(suit_biased, mask_r)
-
-# Surface correlation
-set.seed(SEED)
-valid_cells <- which(!is.na(values(suit_mx_masked)) &
-                     !is.na(values(suit_biased_masked)))
-samp_idx <- sample(valid_cells, min(50000, length(valid_cells)))
-
-r_pearson  <- round(cor(values(suit_mx_masked)[samp_idx],
-                        values(suit_biased_masked)[samp_idx]), 3)
-r_spearman <- round(cor(values(suit_mx_masked)[samp_idx],
-                        values(suit_biased_masked)[samp_idx],
-                        method = "spearman"), 3)
-
-cat("\nSurface correlation (50k sample, within ecological mask):\n")
-cat("Pearson: ", r_pearson, "\n")
-cat("Spearman:", r_spearman, "\n")
-
-# ----------------------------- ARP comparison -------------------------------
-
-pop_aligned <- rast(file.path(DIR_SURFACES, "worldpop_2025_aligned.tif"))
-total_pop   <- global(pop_aligned, "sum", na.rm = TRUE)[[1]]
-
-# Biased-background thresholds
-pred_occ_biased <- predict(mod_biased, newdata = train$occ_env[, vars],
-                           type = "cloglog")[, 1]
-pred_bg_biased  <- predict(mod_biased, newdata = bg_biased_env[, vars],
-                           type = "cloglog")[, 1]
-
-biased_p10 <- unname(quantile(pred_occ_biased, 0.10))
-
-candidates <- sort(unique(c(pred_occ_biased, pred_bg_biased)))
-sens <- sapply(candidates, function(t) mean(pred_occ_biased >= t))
-spec <- sapply(candidates, function(t) mean(pred_bg_biased < t))
-biased_maxsss <- candidates[which.max(sens + spec)]
-
-biased_arp_weighted <- global(pop_aligned * suit_biased_masked, "sum", na.rm = TRUE)[[1]]
-biased_arp_maxsss   <- global(pop_aligned * (suit_biased_masked >= biased_maxsss), "sum", na.rm = TRUE)[[1]]
-biased_arp_p10      <- global(pop_aligned * (suit_biased_masked >= biased_p10), "sum", na.rm = TRUE)[[1]]
-
-# Original ARP (recomputed on masked surface for consistency)
-orig_pred_occ <- predict(mod, newdata = train$occ_env[, vars], type = "cloglog")[, 1]
-orig_pred_bg  <- predict(mod, newdata = train$bg_env[, vars], type = "cloglog")[, 1]
-orig_p10 <- unname(quantile(orig_pred_occ, 0.10))
-
-candidates_orig <- sort(unique(c(orig_pred_occ, orig_pred_bg)))
-sens_orig <- sapply(candidates_orig, function(t) mean(orig_pred_occ >= t))
-spec_orig <- sapply(candidates_orig, function(t) mean(orig_pred_bg < t))
-orig_maxsss <- candidates_orig[which.max(sens_orig + spec_orig)]
-
-orig_arp_weighted <- global(pop_aligned * suit_mx_masked, "sum", na.rm = TRUE)[[1]]
-orig_arp_maxsss   <- global(pop_aligned * (suit_mx_masked >= orig_maxsss), "sum", na.rm = TRUE)[[1]]
-orig_arp_p10      <- global(pop_aligned * (suit_mx_masked >= orig_p10), "sum", na.rm = TRUE)[[1]]
-
-cat("\n--- ARP comparison (ecological mask applied) ---\n")
-cat(sprintf("%-20s %14s %14s\n", "", "Original", "Biased-bg"))
-cat(sprintf("%-20s %14s %14s\n", "Risk-weighted",
-    format(round(orig_arp_weighted), big.mark = ","),
-    format(round(biased_arp_weighted), big.mark = ",")))
-cat(sprintf("%-20s %14s %14s\n", "maxSSS binary",
-    format(round(orig_arp_maxsss), big.mark = ","),
-    format(round(biased_arp_maxsss), big.mark = ",")))
-cat(sprintf("%-20s %14s %14s\n", "p10 binary",
-    format(round(orig_arp_p10), big.mark = ","),
-    format(round(biased_arp_p10), big.mark = ",")))
-
-pct_shift <- round(100 * (biased_arp_weighted - orig_arp_weighted) / orig_arp_weighted, 1)
-cat("Risk-weighted shift (masked):", pct_shift, "%\n")
-
-# Unmasked ARP — Full prediction surface. 
-# About 17% of the uniform-background ARP lies 
-# outside the ecological mask (see 08 diagnostics).
-orig_arp_unmasked   <- global(pop_aligned * suit_mx, "sum", na.rm = TRUE)[[1]]
-biased_arp_unmasked <- global(pop_aligned * suit_biased, "sum", na.rm = TRUE)[[1]]
-
-pct_shift_unmasked <- round(100 * (biased_arp_unmasked - orig_arp_unmasked) / orig_arp_unmasked, 1)
-
-cat("\n--- ARP comparison (full surface, unmasked) ---\n")
-cat(sprintf("%-20s %14s %14s\n", "", "Original", "Biased-bg"))
-cat(sprintf("%-20s %14s %14s\n", "Risk-weighted",
-    format(round(orig_arp_unmasked), big.mark = ","),
-    format(round(biased_arp_unmasked), big.mark = ",")))
-cat("Risk-weighted shift (unmasked):", pct_shift_unmasked, "%\n")
-
-# ----------------------------- Save summary ---------------------------------
-
-bias_summary <- data.frame(
-  metric     = c("Presences", "Background", "Coefficients",
-                  "CBI (spatial CV)", "AUC (spatial CV)",
-                  "Mean suitability", "ARP risk-weighted",
-                  "ARP maxSSS binary", "ARP p10 binary",
-                  "p10 threshold", "maxSSS threshold",
-                  "Surface correlation (Pearson)", "Bias transform"),
-  original   = c(98, 10000, sum(mod$betas != 0),
-                  0.857, 0.776,
-                  round(global(suit_mx, "mean", na.rm = TRUE)[[1]], 4),
-                  round(orig_arp_weighted), round(orig_arp_maxsss),
-                  round(orig_arp_p10),
-                  round(orig_p10, 4), round(orig_maxsss, 4),
-                  NA, "none"),
-  biased_bg  = c(98, nrow(bg_biased_env),
-                  sum(mod_biased$betas != 0),
-                  round(mean(fold_cbi, na.rm = TRUE), 3),
-                  round(mean(fold_auc), 3),
-                  round(global(suit_biased, "mean", na.rm = TRUE)[[1]], 4),
-                  round(biased_arp_weighted), round(biased_arp_maxsss),
-                  round(biased_arp_p10),
-                  round(biased_p10, 4), round(biased_maxsss, 4),
-                  r_pearson, "1/sqrt(1+tt)")
+p <- refits$uniform
+stopifnot(
+  "Coefficients differ from MODEL_FILE (06)" = isTRUE(all.equal(p$mod$betas, mod$betas)),
+  "CV CBI differs from 06"                   = abs(mean(p$cv$cbi) - tuning$cbi) < 1e-8,
+  "Surface differs from SUIT_FILE (07)" =
+    global(abs(p$surf - suit_r), "max", na.rm = TRUE)[[1]] < 1e-6
 )
+cat("Uniform background reproduces 06 (coefficients, CV CBI) and 07 (surface)\n")
 
-write.csv(bias_summary, file.path(DIR_TABLES, "bias_correction_summary.csv"),
-          row.names = FALSE)
+# ------------------------------ Comparison ----------------------------------
+# Reading fixed before the run: the backgrounds bracket the handling of
+# sampling bias, from none (uniform) to full (matched, an upper bound). A
+# national change within the plateau spread from 08 means accessibility
+# handling matters less than model choice; beyond it, the estimate depends on
+# how sampling bias is treated, and the uniform-to-matched range is reported
+# beside the data-quality range (10).
 
-# -------------------- Log-transform sensitivity -----------------------------
+plateau <- max(abs(cand_08$change_vs_selected[startsWith(cand_08$candidate, paste0(tuning$fc, " "))]))
+belt_r  <- rast(SENS_MASK_FILE) == 1
+belt    <- values(belt_r, mat = FALSE) %in% TRUE
+v_prim  <- values(p$surf, mat = FALSE)
+rw_part <- function(s, region) global(pop * s * region, "sum", na.rm = TRUE)[[1]]
 
-bias_log <- 1 / log1p(1 + tt_aligned)
-bias_log <- mask(bias_log, mask_r)
-
-set.seed(SEED)
-bg_log <- spatSample(bias_log, size = N_BACKGROUND, method = "weights",
-                     na.rm = TRUE, as.points = TRUE)
-bg_log_df <- as.data.frame(bg_log, geom = "XY") |>
-  rename(longitude = x, latitude = y) |>
-  select(longitude, latitude)
-
-bg_log_df$year <- sample(year_weights$year, size = nrow(bg_log_df),
-                         replace = TRUE, prob = year_weights$weight)
-bg_log_pts <- vect(bg_log_df, geom = c("longitude", "latitude"), crs = "EPSG:4326")
-bg_log_env <- extract_year_matched(bg_log_df, vars, mask_r)
-
-complete <- complete.cases(bg_log_env)
-bg_log_env <- bg_log_env[complete, ]
-
-p_mat <- as.matrix(train$occ_env[, vars])
-b_mat <- as.matrix(bg_log_env[, vars])
-
-mod_log <- maxnet(
-  p    = c(rep(1, nrow(p_mat)), rep(0, nrow(b_mat))),
-  data = as.data.frame(rbind(p_mat, b_mat)),
-  f    = maxnet.formula(
-    p    = c(rep(1, nrow(p_mat)), rep(0, nrow(b_mat))),
-    data = as.data.frame(rbind(p_mat, b_mat)),
-    classes = best_classes
-  ),
-  regmult = tuning$rm
-)
-
-suit_log <- predict(cov_stack_mean, mod_log, type = "cloglog",
-                    clamp = TRUE, na.rm = TRUE)
-
-log_arp_weighted <- global(pop_aligned * mask(suit_log, mask_r), "sum", na.rm = TRUE)[[1]]
-
-tt_log <- terra::extract(tt_raw, vect(bg_log_df[complete, ], geom = c("longitude", "latitude"),
-                                      crs = "EPSG:4326"))[, 2]
-
-cat("\n--- Bias transform sensitivity ---\n")
-cat("Sqrt \u2014 bg median:", round(median(tt_biased, na.rm = TRUE)), "min, ARP:",
-    format(round(biased_arp_weighted), big.mark = ","), "\n")
-cat("Log  \u2014 bg median:", round(median(tt_log, na.rm = TRUE)), "min, ARP:",
-    format(round(log_arp_weighted), big.mark = ","), "\n")
-
-saveRDS(mod_log, file.path(DIR_MODELS, "maxent_log_bias_background.rds"))
-
-# ------------------ Both-extent comparison  -----------------------------
-# Every comparison on both extents: the full prediction surface and within
-# the >= 150 mm ecological mask. 
-
-extents   <- list(full = NULL, masked = mask_r)
-on_extent <- function(r, ext) if (is.null(ext)) r else mask(r, ext)
-rw_sum    <- function(r) global(pop_aligned * r, "sum", na.rm = TRUE)[[1]]
-
-surf_cor <- function(a, b) {
-  va <- values(a)[, 1]
-  vb <- values(b)[, 1]
-  ok <- which(!is.na(va) & !is.na(vb))
-  set.seed(SEED)
-  s  <- sample(ok, min(50000, length(ok)))
-  c(pearson  = cor(va[s], vb[s]),
-    spearman = cor(va[s], vb[s], method = "spearman"))
-}
-
-extent_summary <- bind_rows(lapply(names(extents), function(e) {
-  ext <- extents[[e]]
-  o <- on_extent(suit_mx, ext)
-  b <- on_extent(suit_biased, ext)
-  l <- on_extent(suit_log, ext)
-  arp_o <- rw_sum(o); arp_b <- rw_sum(b); arp_l <- rw_sum(l)
-  cr <- surf_cor(o, b)
+summary_df <- bind_rows(lapply(names(refits), function(nm) {
+  r <- refits[[nm]]; v <- values(r$surf, mat = FALSE); ok <- !is.na(v) & !is.na(v_prim)
   data.frame(
-    extent          = e,
-    arp_uniform     = arp_o,
-    arp_sqrt        = arp_b,
-    arp_log         = arp_l,
-    shift_sqrt_pct  = round(100 * (arp_b - arp_o) / arp_o, 1),
-    shift_log_pct   = round(100 * (arp_l - arp_o) / arp_o, 1),
-    sqrt_vs_log_pct = round(100 * abs(arp_b - arp_l) / arp_b, 1),
-    pearson         = round(cr[["pearson"]], 3),
-    spearman        = round(cr[["spearman"]], 3)
-  )
-}))
+    background = nm, b = bias_b[[nm]], n_coef = length(r$mod$betas),
+    cv_cbi_own_bg = mean(r$cv$cbi, na.rm = TRUE), cv_auc_own_bg = mean(r$cv$auc),
+    rho_domain = cor(v[ok], v_prim[ok], method = "spearman"),
+    rho_belt   = cor(v[ok & belt], v_prim[ok & belt], method = "spearman"),
+    arp_weighted   = r$arp[["risk_weighted"]],
+    rw_in_150mm    = rw_part(r$surf, belt_r),
+    rw_below_150mm = rw_part(r$surf, !belt_r),
+    arp_maxsss = r$arp[["maxsss"]], maxsss = r$thr[["maxsss"]],
+    arp_p10    = r$arp[["p10"]],    p10    = r$thr[["p10"]])
+})) |>
+  mutate(rw_change_pct      = 100 * (arp_weighted / arp_weighted[background == "uniform"] - 1),
+         beyond_plateau     = abs(rw_change_pct) > plateau,
+         change_in_150mm    = rw_in_150mm    - rw_in_150mm[background == "uniform"],
+         change_below_150mm = rw_below_150mm - rw_below_150mm[background == "uniform"])
 
-cat("\n--- Accessibility correction on both extents ---\n")
-extent_summary |>
-  mutate(across(starts_with("arp_"), ~ format(round(.), big.mark = ","))) |>
+cat("\nFit and surface (CV against each model's own background):\n")
+summary_df |>
+  select(background, b, n_coef, cv_cbi_own_bg, cv_auc_own_bg, rho_domain, rho_belt) |>
+  mutate(across(where(is.double), ~ round(., 3))) |> print(row.names = FALSE)
+
+cat("\nPopulation at risk | plateau spread: +/-", round(plateau, 1), "%\n")
+summary_df |>
+  select(background, arp_weighted, rw_change_pct, beyond_plateau, change_in_150mm,
+         change_below_150mm, arp_maxsss, arp_p10) |>
+  mutate(across(c(arp_weighted, change_in_150mm, change_below_150mm, arp_maxsss, arp_p10), fmt),
+         rw_change_pct = round(rw_change_pct, 1)) |>
   print(row.names = FALSE)
 
-write.csv(extent_summary, file.path(DIR_TABLES, "bias_correction_by_extent.csv"),
-          row.names = FALSE)
+# -------------------------------- States ------------------------------------
 
-# -------------------- State-level ARP comparison ----------------------------
+zones    <- state_zones(suit_r)
+surf_all <- do.call(c, unname(lapply(refits, `[[`, "surf")))
+names(surf_all) <- names(refits)
+rw_all   <- pop * surf_all
+names(rw_all) <- names(refits)
 
-adm1 <- geodata::gadm(country = "SDN", level = 1, path = here::here("data", "raw"))
+state_df <- zonal(rw_all, zones, fun = "sum", na.rm = TRUE)
+names(state_df)[1] <- "state"
+stopifnot("States do not sum to the national estimates" =
+  all(abs(colSums(state_df[names(refits)]) / summary_df$arp_weighted - 1) < POP_TOL))
+state_df <- state_df |>
+  mutate(across(all_of(names(refits)[-1]), ~ round(100 * (. / uniform - 1), 1),
+                .names = "{.col}_pct")) |>
+  arrange(desc(uniform))
 
-rw_orig   <- pop_aligned * suit_mx_masked
-rw_biased <- pop_aligned * suit_biased_masked
+cat("\nRisk-weighted estimate by state (uniform; % change under each correction):\n")
+state_df |> select(state, uniform, ends_with("_pct")) |>
+  mutate(uniform = fmt(uniform)) |> print(right = FALSE, row.names = FALSE)
 
-state_comparison <- data.frame(
-  state      = adm1$NAME_1,
-  total_pop  = terra::extract(pop_aligned, adm1, fun = "sum", na.rm = TRUE, ID = FALSE)[[1]],
-  arp_orig   = terra::extract(rw_orig, adm1, fun = "sum", na.rm = TRUE, ID = FALSE)[[1]],
-  arp_biased = terra::extract(rw_biased, adm1, fun = "sum", na.rm = TRUE, ID = FALSE)[[1]]
-) |>
-  mutate(
-    delta      = arp_biased - arp_orig,
-    pct_change = round(100 * delta / arp_orig, 1),
-    pct_orig   = round(100 * arp_orig / total_pop, 1),
-    pct_biased = round(100 * arp_biased / total_pop, 1)
-  ) |>
-  arrange(desc(delta))
+# ------------------------------- Figures ------------------------------------
+# Response curves with the others at the presence median (as 07), over the
+# uniform background's range, so the models share one reference.
 
-cat("\nState-level ARP: original vs accessibility-corrected (risk-weighted):\n")
-state_comparison |>
-  mutate(across(c(total_pop, arp_orig, arp_biased, delta),
-                ~ format(round(.), big.mark = ","))) |>
-  print(right = FALSE)
+ref     <- sapply(occ_env, median)
+env_all <- rbind(occ_env, bg_env)
+curves  <- bind_rows(lapply(names(refits), function(nm)
+  data.frame(background = nm, response_curves(refits[[nm]]$mod, ref, env_all, vars)))) |>
+  mutate(background = factor(background, levels = names(pal_bias)))
 
-write.csv(state_comparison, file.path(DIR_TABLES, "arp_by_state_bias_comparison.csv"),
-          row.names = FALSE)
+p_curves <- ggplot(curves, aes(value, suit, colour = background)) +
+  geom_line(data = filter(curves, variable != "vertisols"), linewidth = 0.7) +
+  geom_point(data = filter(curves, variable == "vertisols"), size = 2) +
+  facet_wrap(~ variable, scales = "free_x", nrow = 2) +
+  scale_colour_manual(values = pal_bias, labels = bias_labels, name = NULL) +
+  labs(x = NULL, y = "Suitability (cloglog)") +
+  theme(legend.position = "bottom")
+save_fig(file.path(DIR_FIGS, "response_curves_bias_comparison.png"), p_curves,
+         width = FIG_WIDTH_FULL, height = FIG_HEIGHT_PLOT)
 
-# ------------------ State-level comparison, both extents --------------------
-# outside_delta = the part of each state's change from cells outside the mask
+display  <- st_as_sf(vect(DISPLAY_ADM0_FILE))
+states   <- st_as_sf(vect(ADM1_FILE))
+bb       <- st_bbox(display)
+map_xlim <- c(bb[["xmin"]], bb[["xmax"]]) + c(-0.5, 0.5)
+map_ylim <- c(bb[["ymin"]], bb[["ymax"]]) + c(-0.5, 0.5)
 
-state_sum <- function(r) {
-  terra::extract(r, adm1, fun = "sum", na.rm = TRUE, ID = FALSE)[[1]]
-}
-
-state_both <- data.frame(
-  state          = adm1$NAME_1,
-  full_uniform   = state_sum(pop_aligned * suit_mx),
-  full_sqrt      = state_sum(pop_aligned * suit_biased),
-  masked_uniform = state_sum(pop_aligned * suit_mx_masked),
-  masked_sqrt    = state_sum(pop_aligned * suit_biased_masked)
-) |>
-  mutate(
-    full_delta    = full_sqrt - full_uniform,
-    masked_delta  = masked_sqrt - masked_uniform,
-    outside_delta = full_delta - masked_delta
-  ) |>
-  arrange(desc(full_delta))
-
-cat("\nState-level change from accessibility correction, both extents:\n")
-state_both |>
-  mutate(across(-state, ~ format(round(.), big.mark = ","))) |>
-  print(right = FALSE)
-
-write.csv(state_both, file.path(DIR_TABLES, "arp_by_state_bias_both_extents.csv"),
-          row.names = FALSE)
-
-# -------------------- Suitability map figure --------------------------------
-
-adm0  <- gadm(country = "SDN", level = 0, path = here::here("data", "raw"))
-sudan <- st_as_sf(adm0)
-occ   <- read.csv(here::here("data", "processed", "occurrences_thinned.csv"))
-
-suit_biased_sudan <- mask(suit_biased, vect(sudan))
-
-pred_df <- as.data.frame(suit_biased_sudan, xy = TRUE)
-names(pred_df) <- c("x", "y", "suitability")
-pred_df <- pred_df[!is.na(pred_df$suitability), ]
-
-p_suit <- ggplot() +
-  geom_sf(data = sudan, fill = "grey90", colour = "grey30", linewidth = 0.5) +
-  geom_raster(data = pred_df, aes(x = x, y = y, fill = suitability)) +
-  scale_fill_gradientn(
-    colours = c("#2166AC", "#67A9CF", "#D1E5F0", "#FDDBC7",
-                "#EF8A62", "#B2182B"),
-    na.value = "transparent",
-    name = "Habitat\nsuitability",
-    limits = c(0, 1)
-  ) +
-  geom_sf(data = sudan, fill = NA, colour = "grey30", linewidth = 0.5) +
-  geom_point(data = occ, aes(x = longitude, y = latitude),
-             colour = "black", fill = "white",
-             shape = 21, size = 1.5, stroke = 0.5) +
-  annotation_scale(location = "bl", width_hint = 0.2) +
-  annotation_north_arrow(location = "tr", which_north = "true",
-                         style = north_arrow_minimal()) +
-  labs(title = "VL habitat suitability \u2014 accessibility-corrected background",
-       subtitle = "MaxEnt (LQH, rm = 1.5); background sampled \u221d 1/\u221a(1 + travel time)") +
-  coord_sf(xlim = c(21.5, 39), ylim = c(8.5, 23), crs = 4326) +
-  theme_minimal() +
-  theme(panel.grid = element_blank(),
-        axis.title = element_blank())
-
-ggsave(file.path(DIR_FIGS, "suitability_biased_bg.png"), p_suit,
-       width = 10, height = 8, dpi = 300)
-cat("Saved suitability_biased_bg.png\n")
-
-# ------------------- Response curves comparison -----------------------------
-
-bg_medians_orig   <- apply(train$bg_env[, vars], 2, median)
-bg_medians_biased <- apply(bg_biased_env[, vars], 2, median)
-
-bg_all <- rbind(train$bg_env[, vars], bg_biased_env[, vars])
-n_pts  <- 200
-
-var_labels <- c(
-  slope      = "Slope (degrees)",
-  river_dist = "Distance to river (m)",
-  vertisols  = "Vertisols (0/1)",
-  lst_night  = "LST night (\u00b0C)",
-  rainfall   = "Rainfall (mm/yr)"
-)
-
-build_curves <- function(model, bg_medians, label) {
-  bind_rows(lapply(vars, function(var) {
-    if (var == "vertisols") {
-      newdata <- as.data.frame(t(replicate(2, bg_medians)))
-      newdata[[var]] <- c(0, 1)
-    } else {
-      newdata <- as.data.frame(t(replicate(n_pts, bg_medians)))
-      newdata[[var]] <- seq(min(bg_all[[var]]), max(bg_all[[var]]),
-                            length.out = n_pts)
-    }
-    newdata$suitability <- predict(model, newdata, clamp = TRUE,
-                                   type = "cloglog")
-    tibble(
-      variable = var,
-      value    = newdata[[var]],
-      suit     = as.numeric(newdata$suitability),
-      model    = label
-    )
-  }))
-}
-
-curves <- bind_rows(
-  build_curves(mod, bg_medians_orig, "Uniform background"),
-  build_curves(mod_biased, bg_medians_biased, "Accessibility-corrected")
-) |>
-  mutate(var_label = var_labels[variable],
-         var_label = factor(var_label, levels = var_labels))
-
-p_curves <- ggplot(curves, aes(x = value, y = suit, colour = model)) +
-  geom_line(data = curves |> filter(variable != "vertisols"),
-            linewidth = 0.9) +
-  geom_point(data = curves |> filter(variable == "vertisols"),
-             size = 3) +
-  facet_wrap(~ var_label, scales = "free_x", nrow = 2) +
-  scale_colour_manual(
-    values = c("Uniform background" = "#2166AC",
-               "Accessibility-corrected" = "#B2182B"),
-    name = NULL
-  ) +
-  labs(x = NULL,
-       y = "Habitat suitability (cloglog)",
-       title = "Marginal response curves \u2014 uniform vs accessibility-corrected background",
-       subtitle = "Each covariate varied across shared range; others held at respective background median") +
-  theme_minimal() +
-  theme(strip.text = element_text(face = "bold"),
-        legend.position = "top")
-
-ggsave(file.path(DIR_FIGS, "response_curves_bias_comparison.png"), p_curves,
-       width = 10, height = 6, dpi = 300)
-cat("Saved response_curves_bias_comparison.png\n")
-
-cat("12_sampling_bias_robustness.R complete\n")
-
-# ================== DISSERTATION FIGURE =======================================
-# Side-by-side: original vs accessibility-corrected suitability surface.
-# Objects needed: suit_mx, suit_biased, sudan (all from earlier in script)
-# Outputs: outputs/figures/fig_bias_comparison.pdf
-#          outputs/figures/fig_bias_comparison.png
-# =============================================================================
-
-library(patchwork)
-source(here::here("R", "plotting_theme.R"))
-
-# State boundaries
-adm1_sf <- st_as_sf(adm1)
-
-# Prepare both surfaces as data frames
-orig_masked <- mask(suit_mx, vect(sudan))
-orig_df <- as.data.frame(orig_masked, xy = TRUE)
-names(orig_df) <- c("x", "y", "suitability")
-orig_df <- orig_df[!is.na(orig_df$suitability), ]
-
-biased_masked <- mask(suit_biased, vect(sudan))
-biased_df <- as.data.frame(biased_masked, xy = TRUE)
-names(biased_df) <- c("x", "y", "suitability")
-biased_df <- biased_df[!is.na(biased_df$suitability), ]
-
-# Shared extent (cropped east to drop Red Sea islands)
-map_xlim <- c(21.5, 38.5)
-map_ylim <- c(8, 24.5)
-
-# Helper: build one suitability map panel
-make_suit_panel <- function(df, title) {
+map_panel <- function(nm, title) {
+  df <- as.data.frame(surf_all[[nm]], xy = TRUE, na.rm = TRUE)
+  names(df) <- c("x", "y", "suitability")
   ggplot() +
-    geom_sf(data = sudan, fill = "grey95", colour = NA) +
-    geom_raster(data = df, aes(x = x, y = y, fill = suitability)) +
+    geom_raster(data = df, aes(x, y, fill = suitability)) +
     scale_fill_suitability() +
-    guides(fill = guide_colourbar(
-      barheight = unit(0.4, "cm"),
-      barwidth  = unit(3, "cm"),
-      title.position = "left",
-      title.theme = element_text(size = 7, vjust = 0.8),
-      label.theme = element_text(size = 6)
-    )) +
-    geom_sf(data = adm1_sf, fill = NA, colour = "black", linewidth = 0.15) +
-    geom_sf(data = sudan, fill = NA, colour = "black", linewidth = 0.3) +
+    layer_admin1(data = states, colour = "black", linewidth = 0.15) +
+    layer_country(data = display, colour = "black", linewidth = 0.3) +
     labs(title = title) +
     coord_sf(xlim = map_xlim, ylim = map_ylim, crs = 4326, expand = FALSE) +
     theme_map() +
-    theme(
-      legend.position = "bottom",
-      legend.justification = "center",
-      legend.background = element_blank(),
-      legend.margin = margin(0, 0, 0, 0),
-      plot.title = element_text(size = 9, hjust = 0)
-    )
+    theme(plot.title = element_text(size = 9, hjust = 0))
 }
+fig_maps <- map_panel("uniform", "(a) Uniform background") +
+  map_panel("matched", "(b) Background matched to presence accessibility") +
+  plot_layout(guides = "collect") & theme(legend.position = "bottom")
+for (ext in c("png", "pdf"))
+  save_fig(file.path(DIR_FIGS, paste0("fig_bias_comparison.", ext)), fig_maps,
+           width = FIG_WIDTH_FULL, height = FIG_HEIGHT_PLOT)
 
-p_orig   <- make_suit_panel(orig_df,   "(a) Uniform background")
-p_biased <- make_suit_panel(biased_df, "(b) Accessibility-corrected background")
+# --------------------------------- Save -------------------------------------
 
-fig_bias_comparison <- p_orig + p_biased +
-  plot_layout(guides = "collect") &
-  theme(legend.position = "bottom")
+writeRaster(surf_all, BIAS_SURFACES_FILE, overwrite = TRUE)
+write.csv(summary_df, file.path(DIR_TABLES, "bias_correction_summary.csv"),  row.names = FALSE)
+write.csv(state_df,   file.path(DIR_TABLES, "bias_correction_by_state.csv"), row.names = FALSE)
+cat("12_sampling_bias_robustness.R complete\n")
 
-save_fig(file.path(DIR_FIGS, "fig_bias_comparison.png"), fig_bias_comparison,
-         width = FIG_WIDTH_FULL, height = 12)
-save_fig(file.path(DIR_FIGS, "fig_bias_comparison.pdf"), fig_bias_comparison,
-         width = FIG_WIDTH_FULL, height = 12)
-cat("Saved fig_bias_comparison\n")
+
+

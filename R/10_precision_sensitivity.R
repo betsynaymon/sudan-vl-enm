@@ -15,7 +15,7 @@
 # Inputs:  TRAIN_FILE, TUNING_FILE, MODEL_FILE, SUIT_FILE, POP_ALIGNED_FILE,
 #          DOMAIN_FILE, ADM1_FILE, SENS_MASK_FILE, retained_vars.rds,
 #          outputs/tables/arp_summary.csv, arp_plateau_candidates.csv (08)
-# Outputs: outputs/surfaces/data_quality_refit_surfaces.tif
+# Outputs: DQ_SURFACES_FILE
 #          outputs/tables/data_quality_refits.csv
 #          outputs/tables/data_quality_refits_by_state.csv
 # ============================================================================
@@ -197,7 +197,7 @@ state_df |> select(state, n_presences, primary, ends_with("_pct")) |>
 
 # --------------------------------- Save -------------------------------------
 
-writeRaster(surf_all, file.path(DIR_SURFACES, "data_quality_refit_surfaces.tif"),
+writeRaster(surf_all, DQ_SURFACES_FILE,
             overwrite = TRUE)
 write.csv(summary_df, file.path(DIR_TABLES, "data_quality_refits.csv"), row.names = FALSE)
 write.csv(state_df,   file.path(DIR_TABLES, "data_quality_refits_by_state.csv"), row.names = FALSE)

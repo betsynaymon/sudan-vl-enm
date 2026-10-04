@@ -9,16 +9,18 @@ auc_ties <- function(p_occ, p_bg) {
 }
 
 # Response curves: each covariate varied across the range of `env`, the
-# others held at `ref`. Binary covariates are evaluated at 0 and 1.
-response_curves <- function(mod, ref, env, vars, n = 200) {
+# others held at `ref`. Binary covariates are evaluated at 0 and 1. `pred`
+# returns suitability for a model and data frame: MaxEnt cloglog (clamped) by
+# default, rf_prob for the random forest.
+response_curves <- function(mod, ref, env, vars, n = 200,
+                            pred = function(m, d) predict(m, d, type = "cloglog", clamp = TRUE)) {
   do.call(rbind, lapply(vars, function(v) {
     x <- if (all(env[[v]] %in% c(0, 1))) c(0, 1) else
       seq(min(env[[v]]), max(env[[v]]), length.out = n)
     nd <- as.data.frame(matrix(rep(ref, each = length(x)), ncol = length(ref),
                                dimnames = list(NULL, names(ref))))
     nd[[v]] <- x
-    data.frame(variable = v, value = x,
-               suit = as.numeric(predict(mod, nd, type = "cloglog", clamp = TRUE)))
+    data.frame(variable = v, value = x, suit = as.numeric(pred(mod, nd)))
   }))
 }
 
@@ -84,23 +86,27 @@ fit_maxnet <- function(p, data, fc, rm) {
                  regmult = rm)
 }
 
-# Validation metrics for one fold. AUC counts ties as half; CBI uses the
-# moving-window Boyce index; omission uses the OMISSION_Q training threshold.
-eval_fold <- function(mod, test_occ, test_bg, train_occ) {
-  p_occ <- as.numeric(predict(mod, test_occ,  type = "cloglog"))
-  p_bg  <- as.numeric(predict(mod, test_bg,   type = "cloglog"))
-  p_tr  <- as.numeric(predict(mod, train_occ, type = "cloglog"))
-
-  auc <- auc_ties(p_occ, p_bg)
+# Validation metrics from predictions, for any algorithm: test presences,
+# test background, and training presences (for the OMISSION_Q threshold).
+# AUC counts ties as half; CBI is the moving-window Boyce index.
+score_preds <- function(p_occ, p_bg, p_tr) {
   cbi <- tryCatch(
     ecospat::ecospat.boyce(fit = c(p_occ, p_bg), obs = p_occ, nclass = 0,
                            window.w = "default", res = BOYCE_RES,
                            PEplot = FALSE)$cor,
     error = function(e) NA_real_)
-  or10 <- mean(p_occ < quantile(p_tr, OMISSION_Q))
-
-  data.frame(auc = auc, cbi = cbi, or_10p = or10)
+  data.frame(auc = auc_ties(p_occ, p_bg), cbi = cbi,
+             or_10p = mean(p_occ < quantile(p_tr, OMISSION_Q)))
 }
+
+# MaxEnt suitability (cloglog) as a vector.
+maxnet_prob <- function(mod, data) as.numeric(predict(mod, data, type = "cloglog"))
+
+# Validation metrics for one MaxEnt fold (06, 13).
+eval_fold <- function(mod, test_occ, test_bg, train_occ)
+  score_preds(maxnet_prob(mod, test_occ), maxnet_prob(mod, test_bg),
+              maxnet_prob(mod, train_occ))
+
 
 # p10 (OMISSION_Q quantile of presence predictions) and maxSSS (maximum
 # sensitivity + specificity against the background).
@@ -114,26 +120,40 @@ thresholds_from <- function(pred_occ, pred_bg) {
 fmt <- function(x) format(round(x), big.mark = ",")
 
 # Long-term covariates for `vars`, masked to the domain: the prediction stack
-# (06b, 07 and every refit).
-domain_covs <- function(vars) {
-  r <- terra::rast(file.path(DIR_COVARIATES, COV_FILES[vars]))
+# (06b, 07 and every refit). `files` defaults to COV_FILES; 15 adds the
+# seasonal composites.
+domain_covs <- function(vars, files = COV_FILES) {
+  r <- terra::rast(file.path(DIR_COVARIATES, files[vars]))
   names(r) <- vars
   terra::mask(r, terra::rast(DOMAIN_FILE), maskvalues = 0)
 }
-
-# Spatial CV for one configuration, as in 06: each fold's model is fitted on
-# the other folds and scored on its own. `fold` is each row's own fold. A
-# failed fit stops rather than being skipped.
-cv_maxnet <- function(pa, env, fold, fc, rm) {
+# Spatial CV for any algorithm, as in 06: each fold's model is fitted on the
+# other folds and scored on its own. fit(pa, env) returns a model and
+# pred(model, env) its suitability; `fold` is each row's own fold. With
+# `within` (one logical per row), metrics are also computed on the test rows
+# inside it (suffix _wet); the omission threshold still uses all training
+# presences, as in 06. A failed fit stops rather than being skipped.
+cv_fit <- function(pa, env, fold, fit, pred, within = NULL) {
   do.call(rbind, lapply(seq_len(K_FOLDS), function(k) {
-    tr <- fold != k
-    m  <- fit_maxnet(pa[tr], env[tr, ], fc, rm)
-    cbind(fold = k, n_test_pres = sum(!tr & pa == 1),
-          eval_fold(m, test_occ  = env[!tr & pa == 1, ],
-                       test_bg   = env[!tr & pa == 0, ],
-                       train_occ = env[tr & pa == 1, ]))
+    tr   <- fold != k
+    m    <- fit(pa[tr], env[tr, ])
+    p_tr <- pred(m, env[tr & pa == 1, ])
+    out  <- cbind(fold = k, n_test_pres = sum(!tr & pa == 1),
+                  score_preds(pred(m, env[!tr & pa == 1, ]),
+                              pred(m, env[!tr & pa == 0, ]), p_tr))
+    if (!is.null(within)) {
+      w <- score_preds(pred(m, env[!tr & pa == 1 & within, ]),
+                       pred(m, env[!tr & pa == 0 & within, ]), p_tr)
+      names(w) <- paste0(names(w), "_wet")
+      out <- cbind(out, w)
+    }
+    out
   }))
 }
+
+# Spatial CV for one MaxEnt configuration.
+cv_maxnet <- function(pa, env, fold, fc, rm, within = NULL)
+  cv_fit(pa, env, fold, function(p, d) fit_maxnet(p, d, fc, rm), maxnet_prob, within)
 
 # Fit, cross-validate and threshold one configuration on a presence and
 # background set: the refit used by 10, 12 and 15.
@@ -182,3 +202,168 @@ fold_from_blocks <- function(pts) {
   p <- sf::st_transform(p, sf::st_crs(blocks))
   blocks$folds[sf::st_nearest_feature(p, blocks)]
 }
+
+# Weighted median of travel time `tt` (minutes) under weights (1 + tt)^-b.
+tt_wmedian <- function(tt, b) {
+  s <- sort(tt[!is.na(tt)]); w <- (1 + s)^(-b)
+  s[which(cumsum(w) >= sum(w) / 2)[1]]
+}
+
+# Exponent b at which the weighted median of `tt` (candidate cells) equals
+# `target`: the accessibility weighting that makes a weighted sample as close
+# to cities as the presences (12, 13).
+tt_exponent <- function(tt, target, grid = seq(0, 3, by = 0.01)) {
+  s   <- sort(tt[!is.na(tt)])
+  med <- sapply(grid, function(b) { w <- (1 + s)^(-b); s[which(cumsum(w) >= sum(w) / 2)[1]] })
+  b   <- grid[which.min(abs(med - target))]
+  if (b <= min(grid) || b >= max(grid)) stop("Calibrated exponent at the edge of the search range")
+  b
+}
+
+# Weighted sample of cells (with replacement, so exactly proportional to `w`;
+# NULL = uniform) as points with a year drawn from `years` (a table of
+# counts), year-matched values, and folds from 05's blocks. Points missing an
+# annual value are dropped and counted. Used for 13's null pools and 12's
+# corrected backgrounds.
+draw_points <- function(template, cells, n, w, years, vars, seed) {
+  set.seed(seed)
+  idx <- sample(cells, n, replace = TRUE, prob = w)
+  pts <- as.data.frame(terra::xyFromCell(template, idx))
+  names(pts) <- c("longitude", "latitude")
+  pts$year <- as.integer(sample(names(years), n, replace = TRUE, prob = years))
+  env  <- extract_year_matched(pts, vars, require_complete = FALSE)
+  keep <- complete.cases(env)
+  list(pts = pts[keep, ], env = env[keep, vars], fold = fold_from_blocks(pts[keep, ]),
+       cell = idx[keep], dropped = sum(!keep))
+}
+
+# In-sample permutation importance: AUC drop when one covariate is shuffled
+# across presences `o` and background `b` (07, 24). N_PERM permutations per
+# variable; set the seed before calling.
+perm_importance <- function(mod, o, b, vars, n = N_PERM) {
+  base <- auc_ties(as.numeric(predict(mod, o, type = "cloglog")),
+                   as.numeric(predict(mod, b, type = "cloglog")))
+  t(sapply(vars, function(v) {
+    drops <- replicate(n, {
+      shuf <- sample(c(o[[v]], b[[v]]))
+      o2 <- o; b2 <- b
+      o2[[v]] <- shuf[seq_len(nrow(o))]
+      b2[[v]] <- shuf[-seq_len(nrow(o))]
+      base - auc_ties(as.numeric(predict(mod, o2, type = "cloglog")),
+                      as.numeric(predict(mod, b2, type = "cloglog")))
+    })
+    c(mean = mean(drops), sd = sd(drops))
+  }))
+}
+
+# Positions read off one response curve (columns variable, value, suit;
+# value ascending): the peak, and the lowest (rise_XX) and highest (fall_XX)
+# values where suitability is at least XX% of the peak. Other covariates are
+# held at a reference, so positions are more robust than heights (07, 09, 24).
+curve_features <- function(d) {
+  mx <- max(d$suit)
+  x_at <- function(frac, side) {
+    above <- d$value[d$suit >= frac * mx]
+    if (side == "rise") min(above) else max(above)
+  }
+  tibble::tibble(
+    variable  = unique(d$variable),
+    peak_x    = d$value[which.max(d$suit)],
+    peak_suit = mx,
+    min_suit  = min(d$suit),
+    rise_10 = x_at(0.10, "rise"), rise_50 = x_at(0.50, "rise"),
+    rise_90 = x_at(0.90, "rise"),
+    fall_90 = x_at(0.90, "fall"), fall_50 = x_at(0.50, "fall"),
+    fall_10 = x_at(0.10, "fall")
+  )
+}
+
+# Random forest for presence-background data, down-sampled (Valavi et al.
+# 2021): a probability forest whose every tree draws, with replacement, as
+# many presences and as many background points as there are presences.
+# ranger seeds each tree from SEED, so fits are reproducible.
+fit_rf <- function(pa, env, mtry, keep.inbag = FALSE) {
+  n_pres <- sum(pa == 1)
+  ranger::ranger(x = env, y = factor(pa, levels = c(0, 1)), probability = TRUE,
+                 num.trees = RF_NTREES, mtry = mtry, replace = TRUE,
+                 sample.fraction = rep(n_pres / length(pa), 2),
+                 keep.inbag = keep.inbag, seed = SEED, verbose = FALSE)
+}
+
+# Random-forest probability of presence; also the `fun` for terra::predict.
+rf_prob <- function(mod, data, ...)
+  predict(mod, data = data, verbose = FALSE)$predictions[, "1"]
+
+# ---- Comparisons across algorithms (06, 07, 09, 17) ----
+
+# Each presence predicted by the model fitted without its fold, and whether it
+# falls below that model's OMISSION_Q threshold (from its own training
+# presences): does the model predict a record without its neighbours? One row
+# per presence, in presence order (06, 17).
+heldout_preds <- function(pa, env, fold, fit, pred) {
+  out <- data.frame(fold = fold[pa == 1], pred = NA_real_, thr = NA_real_)
+  for (k in seq_len(K_FOLDS)) {
+    tr <- fold != k
+    m  <- fit(pa[tr], env[tr, ])
+    out$pred[out$fold == k] <- pred(m, env[!tr & pa == 1, ])
+    out$thr[out$fold == k]  <- quantile(pred(m, env[tr & pa == 1, ]), OMISSION_Q, names = FALSE)
+  }
+  out$below_threshold <- out$pred < out$thr
+  out
+}
+
+# curve_features() for every continuous covariate in a set of response
+# curves; vertisols is binary (07, 09, 17).
+curve_table <- function(curves) {
+  cont <- curves[curves$variable != "vertisols", ]
+  dplyr::bind_rows(lapply(split(cont, cont$variable), curve_features))
+}
+
+# Suitability at x as a percentage of the peak of one covariate's response
+# curve (09, 17: rainfall at the wettest presence).
+pct_of_peak <- function(curves, var, x) {
+  r <- curves[curves$variable == var, ]
+  100 * stats::approx(r$value, r$suit, xout = x)$y / max(r$suit)
+}
+
+# One algorithm's row in the comparison (09, 17): cross-validated fit, its own
+# thresholds, population at risk, and rank agreement with MaxEnt's surface
+# (NA for MaxEnt itself).
+comparator_row <- function(model, config, cv, thr, arp,
+                           rho = c(domain = NA_real_, belt = NA_real_))
+  data.frame(model = model, config = config,
+             cv_cbi = mean(cv$cbi), cv_cbi_sd = sd(cv$cbi), cv_cbi_wet = mean(cv$cbi_wet),
+             cv_auc = mean(cv$auc), cv_or_10p = mean(cv$or_10p),
+             p10 = thr[["p10"]], maxsss = thr[["maxsss"]],
+             arp_weighted = arp[["risk_weighted"]], arp_p10 = arp[["p10"]],
+             arp_maxsss = arp[["maxsss"]],
+             rho_domain = rho[["domain"]], rho_belt = rho[["belt"]])
+
+# Each algorithm against MaxEnt (09, 17): CV CBI within one SE of MaxEnt's
+# (`se`), and the risk-weighted change against the plateau spread (%).
+vs_primary <- function(df, se, plateau)
+  dplyr::mutate(df,
+    cbi_within_se  = cv_cbi >= cv_cbi[model == "maxent"] - se,
+    rw_change_pct  = 100 * (arp_weighted / arp_weighted[model == "maxent"] - 1),
+    beyond_plateau = abs(rw_change_pct) > plateau)
+
+# Gradient boosted trees for presence-background data (17): presences weight
+# 1, background down-weighted to the same total (Valavi et al. 2022). Unlike
+# ranger's case weights these scale each row's loss, not its chance of being
+# drawn: every tree draws GBT_BAG of the rows uniformly. gbm rescales weights
+# to sum to the number of rows and counts rows for the minimum leaf size, so
+# only the ratio matters. Seeded, so the first n trees of a longer fit equal
+# an n-tree fit (17 checks).
+fit_gbt <- function(pa, env, lr, depth, n_trees) {
+  set.seed(SEED)
+  gbm::gbm.fit(x = env, y = pa, distribution = "bernoulli",
+               w = ifelse(pa == 1, 1, sum(pa == 1) / sum(pa == 0)),
+               n.trees = n_trees, interaction.depth = depth, shrinkage = lr,
+               bag.fraction = GBT_BAG, n.minobsinnode = GBT_MIN_NODE,
+               keep.data = FALSE, verbose = FALSE)
+}
+
+# Boosted-tree probability of presence at the model's own number of trees;
+# also the `fun` for terra::predict.
+gbt_prob <- function(mod, data, ...)
+  predict(mod, newdata = data, n.trees = mod$n.trees, type = "response")

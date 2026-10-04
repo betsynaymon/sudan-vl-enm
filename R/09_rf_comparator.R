@@ -1,355 +1,253 @@
 # ============================================================================
 # 09_rf_comparator.R
-# Fits a random forest comparator using the same data, covariates, and spatial
-# CV folds as MaxEnt. Tests whether the suitability surface and ARP are robust
-# to algorithmic assumptions. Produces partial dependence plots comparing
-# learned ecological relationships across both algorithms.
+# Does the surface or the estimate depend on the algorithm? Fits a random
+# forest to the same presences, background, covariates and spatial folds as
+# MaxEnt and compares the two on cross-validated fit, surface ranks,
+# response-curve positions and population at risk. The forest is
+# down-sampled: every tree draws as many background points as presences
+# (fit_rf, helpers.R; Valavi et al. 2021). MaxEnt runs through the same code
+# first and must reproduce 06-08.
 #
-# Inputs:  outputs/models/training_data.rds
-#          outputs/models/spatial_cv_folds.rds
-#          outputs/models/maxent_final.rds
-#          outputs/surfaces/maxent_suitability.tif
-#          outputs/surfaces/worldpop_2025_aligned.tif
-#          outputs/models/retained_vars.rds
-#          outputs/tables/arp_summary.csv
-# Outputs: outputs/models/rf_final.rds
-#          outputs/surfaces/rf_suitability.tif
-#          outputs/tables/arp_full_comparison.csv
-#          outputs/figures/pdp_maxent_vs_rf.png
-#          outputs/figures/suitability_maxent_vs_rf.png
+# Inputs:  TRAIN_FILE, TUNING_FILE, MODEL_FILE, SUIT_FILE, POP_ALIGNED_FILE,
+#          SENS_MASK_FILE, DOMAIN_FILE, ADM1_FILE, retained_vars.rds,
+#          tuning_by_fold.csv (06), response_curve_features.csv (07),
+#          arp_summary.csv and arp_plateau_candidates.csv (08), COV_FILES
+# Outputs: RF_MODEL_FILE, RF_SUIT_FILE, COMPARATOR_FILE
+#          outputs/tables/rf_tuning.csv, comparator_by_state.csv,
+#          comparator_curve_features.csv
+# Figures are drawn in 17, with the gradient boosted trees.
 # ============================================================================
 
 source(here::here("R", "params.R"))
+source(here::here("R", "helpers.R"))
 
 suppressPackageStartupMessages({
-  library(terra)
-  library(sf)
-  library(dplyr)
-  library(ranger)
-  library(ggplot2)
-  library(patchwork)
-  library(ggspatial)
-  library(ecospat)
-  library(geodata)
-  library(maxnet)
+  library(terra); library(dplyr); library(maxnet); library(ranger)
 })
 
 # ------------------------------ Load inputs ---------------------------------
 
-train   <- readRDS(file.path(DIR_MODELS, "training_data.rds"))
-folds   <- readRDS(file.path(DIR_MODELS, "spatial_cv_folds.rds"))
-suit_mx <- rast(file.path(DIR_SURFACES, "maxent_suitability.tif"))
+train   <- readRDS(TRAIN_FILE)
+tuning  <- readRDS(TUNING_FILE)
+mod     <- readRDS(MODEL_FILE)
 vars    <- readRDS(file.path(DIR_MODELS, "retained_vars.rds"))
-mod     <- readRDS(file.path(DIR_MODELS, "maxent_final.rds"))
+suit_r  <- rast(SUIT_FILE)
+pop     <- rast(POP_ALIGNED_FILE)
+belt_r  <- rast(SENS_MASK_FILE)
+fold_06 <- read.csv(file.path(DIR_TABLES, "tuning_by_fold.csv"))
+feat_07 <- read.csv(file.path(DIR_TABLES, "response_curve_features.csv"))
+arp_08  <- read.csv(file.path(DIR_TABLES, "arp_summary.csv"))
+cand_08 <- read.csv(file.path(DIR_TABLES, "arp_plateau_candidates.csv"))
 
-cat("Presences:", nrow(train$occ_env),
-    "| Background:", nrow(train$bg_env), "\n")
+occ     <- train$occ_clean
+bg      <- train$bg_clean
+occ_env <- train$occ_env[, vars]
+bg_env  <- train$bg_env[, vars]
 
-# ---------------------- Training / fold alignment ---------------------------
-# The fold vector (length 10,099) is one longer than the training data
-# (10,098) because MaxEnt's cell×year deduplication dropped one row.
-# Identify the dropped row by coordinates and remove it from the fold
-# vector so both algorithms use identical fold assignments.
-
-df <- bind_rows(
-  bind_cols(train$occ_env, train$occ_clean[, c("longitude", "latitude")]) |>
-    mutate(pa = 1),
-  bind_cols(train$bg_env, train$bg_clean[, c("longitude", "latitude")]) |>
-    mutate(pa = 0)
-)
-
-# Find which presence was dropped during cell×year dedup
-occ_orig <- read.csv(here::here("data", "processed", "occurrences_thinned.csv"))
-occ_keys   <- paste(round(occ_orig$longitude, 5), round(occ_orig$latitude, 5), occ_orig$year)
-train_keys <- paste(round(train$occ_clean$longitude, 5), round(train$occ_clean$latitude, 5), train$occ_clean$year)
-dropped_idx <- which(!occ_keys %in% train_keys)
-
-cat("Dropped row:", dropped_idx,
-    "| Point:", occ_orig$longitude[dropped_idx], occ_orig$latitude[dropped_idx],
-    "year:", occ_orig$year[dropped_idx], "\n")
-
-# Remove dropped row from fold vector
-fold_ids <- folds$folds_ids[-(dropped_idx)]
-
+# Values and points were saved together by 06; each row carries its own fold
+# and its >= 150 mm flag from there.
+pa   <- c(rep(1, nrow(occ_env)), rep(0, nrow(bg_env)))
+env  <- rbind(occ_env, bg_env)
+fold <- c(occ$fold, bg$fold)
+wet  <- c(occ$wet, bg$wet)
 stopifnot(
-  "Fold vector length doesn't match training data" =
-    length(fold_ids) == nrow(df)
+  "Presence rows and values differ"          = nrow(occ) == nrow(occ_env),
+  "Background rows and values differ"        = nrow(bg)  == nrow(bg_env),
+  "A training value is missing"              = !anyNA(env),
+  "A row has no valid fold"                  = all(fold %in% seq_len(K_FOLDS)),
+  "A row has no >= 150 mm flag"              = is.logical(wet) && !anyNA(wet),
+  "Population grid differs from the surface" = compareGeom(pop, suit_r, stopOnError = FALSE),
+  "Belt mask grid differs from the surface"  = compareGeom(belt_r, suit_r, stopOnError = FALSE)
 )
+cat("Presences:", sum(pa == 1), "| background:", sum(pa == 0),
+    "| test presences per fold:", table(fold[pa == 1]), "\n")
+cat("ranger", as.character(packageVersion("ranger")), "\n")
 
-df$fold <- fold_ids
+# ------------------------ MaxEnt reproduces 06-08 ---------------------------
+# Through the same code as the forest below (cv_fit, score_preds,
+# response_curves, curve_features). If this stops, the comparison code
+# differs from 06-08 and nothing below is comparable.
 
-cat("Combined:", nrow(df), "rows (",
-    sum(df$pa == 1), "pres,", sum(df$pa == 0), "bg)\n")
-cat("NA fold assignments:", sum(is.na(df$fold)), "\n")
-cat("Presences per fold:", table(df$fold[df$pa == 1]), "\n")
+cat("\nMaxEnt", tuning$fc, "rm", tuning$rm, ": fit, CV and surface...\n")
+covs      <- domain_covs(vars)
+ref       <- sapply(occ_env, median)
+mx_mod    <- fit_maxnet(pa, env, tuning$fc, tuning$rm)
+mx_cv     <- cv_maxnet(pa, env, fold, tuning$fc, tuning$rm, within = wet)
+mx_thr    <- thresholds_from(maxnet_prob(mx_mod, occ_env), maxnet_prob(mx_mod, bg_env))
+mx_surf   <- terra::predict(covs, mx_mod, type = "cloglog", na.rm = TRUE)
+mx_curves <- response_curves(mx_mod, ref, env, vars)
+mx_arp    <- arp_estimates(suit_r, pop, mx_thr)
 
-# ---------------------- Spatial CV tuning ------------------------------------
-# Tune mtry with CBI under the same spatial block CV folds.
-# Case weights balance classes: each presence counts as ~102 background points.
-
-n_pres <- sum(df$pa == 1)
-n_bg   <- sum(df$pa == 0)
-df$weight <- ifelse(df$pa == 1, n_bg / n_pres, 1)
-
-df$pa <- factor(df$pa, levels = c("0", "1"))
-
-mtry_grid <- 1:5
-n_trees   <- 1000
-
-results <- data.frame()
-
-for (m in mtry_grid) {
-  fold_cbi <- fold_auc <- numeric(4)
-
-  for (k in 1:4) {
-    idx_train <- df$fold != k
-    idx_test  <- df$fold == k
-
-    rf_k <- ranger(
-      pa ~ slope + river_dist + vertisols + lst_night + rainfall,
-      data         = df[idx_train, ],
-      case.weights = df$weight[idx_train],
-      num.trees    = n_trees,
-      mtry         = m,
-      probability  = TRUE,
-      seed         = SEED,
-      verbose      = FALSE
-    )
-
-    pred_test <- predict(rf_k, data = df[idx_test, ])$predictions[, 2]
-    pres_pred <- pred_test[df$pa[idx_test] == "1"]
-    bg_pred   <- pred_test[df$pa[idx_test] == "0"]
-
-    boyce <- ecospat.boyce(fit = pred_test, obs = pres_pred,
-                           nclass = 0, PEplot = FALSE)
-    fold_cbi[k] <- boyce$cor
-
-    n1 <- length(pres_pred)
-    n0 <- length(bg_pred)
-    fold_auc[k] <- (sum(rank(c(pres_pred, bg_pred))[1:n1]) - n1 * (n1 + 1) / 2) / (n1 * n0)
-  }
-
-  results <- rbind(results, data.frame(
-    mtry     = m,
-    mean_cbi = mean(fold_cbi, na.rm = TRUE),
-    sd_cbi   = sd(fold_cbi, na.rm = TRUE),
-    mean_auc = mean(fold_auc),
-    sd_auc   = sd(fold_auc)
-  ))
-  cat("mtry =", m, " | CBI =", round(mean(fold_cbi, na.rm = TRUE), 3),
-      "\u00b1", round(sd(fold_cbi, na.rm = TRUE), 3),
-      " | AUC =", round(mean(fold_auc), 3), "\n")
-}
-
-best <- results[which.max(results$mean_cbi), ]
-cat("\nBest: mtry =", best$mtry,
-    "| CBI =", round(best$mean_cbi, 3),
-    "| AUC =", round(best$mean_auc, 3), "\n")
-
-write.csv(best, file.path(DIR_TABLES, "rf_cv_metrics.csv"), row.names = FALSE)
-# ----------------------- Fit final RF model ---------------------------------
-
-best_mtry <- best$mtry
-
-rf_final <- ranger(
-  pa ~ slope + river_dist + vertisols + lst_night + rainfall,
-  data         = df,
-  case.weights = df$weight,
-  num.trees    = 1000,
-  mtry         = best_mtry,
-  probability  = TRUE,
-  importance   = "permutation",
-  seed         = SEED
+m_cols  <- c("auc", "cbi", "or_10p", "auc_wet", "cbi_wet", "or_10p_wet")
+f06     <- fold_06 |> filter(fc == tuning$fc, rm == tuning$rm) |> arrange(fold)
+thr_08  <- setNames(arp_08$threshold, arp_08$metric)
+arp_08v <- setNames(arp_08$arp,       arp_08$metric)
+stopifnot(
+  "Coefficients differ from MODEL_FILE (06)" = isTRUE(all.equal(mx_mod$betas, mod$betas)),
+  "CV metrics by fold differ from tuning_by_fold.csv (06)" =
+    nrow(f06) == K_FOLDS &&
+    isTRUE(all.equal(as.matrix(mx_cv[, m_cols]), as.matrix(f06[, m_cols]),
+                     check.attributes = FALSE)),
+  "CV CBI differs from 06" = abs(mean(mx_cv$cbi) - tuning$cbi) < 1e-8,
+  "Surface differs from SUIT_FILE (07)" =
+    global(abs(mx_surf - suit_r), "max", na.rm = TRUE)[[1]] < 1e-6 &&
+    global(is.na(mx_surf) != is.na(suit_r), "sum")[[1]] == 0,
+  "Curve features differ from response_curve_features.csv (07)" =
+    isTRUE(all.equal(as.data.frame(curve_table(mx_curves)), feat_07, check.attributes = FALSE)),
+  "Thresholds differ from arp_summary.csv (08)" = all(abs(mx_thr - thr_08[names(mx_thr)]) < 1e-6),
+  "Estimates differ from arp_summary.csv (08)"  = all(round(mx_arp) == arp_08v[names(mx_arp)])
 )
+cat("MaxEnt (", length(mx_mod$betas), " features) reproduces 06 (coefficients, CV by fold),",
+    " 07 (surface, curve features) and 08 (thresholds, estimates)\n", sep = "")
 
-cat("RF final model: mtry =", best_mtry,
-    "| OOB error:", round(rf_final$prediction.error, 4), "\n")
+# ------------------------- Random forest: tune mtry -------------------------
+# Same rows, folds and metrics as MaxEnt. mtry from 1 to the number of
+# covariates; selected: highest mean CV CBI among settings scored on every
+# fold, ties to the smaller mtry. OR10 uses each fold model's predictions at
+# its own training presences, which a forest partly reproduces, so the
+# forest's OR10 is printed but not compared.
 
-saveRDS(rf_final, file.path(DIR_MODELS, "rf_final.rds"))
-
-# ----------------------- Predict RF surface ---------------------------------
-
-suit_rf_path <- file.path(DIR_SURFACES, "rf_suitability.tif")
-
-if (file.exists(suit_rf_path)) {
-  cat("Loading cached RF suitability surface\n")
-  suit_rf <- rast(suit_rf_path)
-} else {
-  cov_stack <- rast(file.path(DIR_COVARIATES, COV_FILES[vars]))
-  names(cov_stack) <- vars
-
-  suit_rf <- predict(cov_stack, rf_final, fun = function(model, ...) {
-    predict(model, ...)$predictions[, 2]
-  }, na.rm = TRUE)
-
-  writeRaster(suit_rf, suit_rf_path, overwrite = TRUE)
-  cat("Computed and saved RF suitability surface\n")
-}
-
-cat("RF suitability range:", round(global(suit_rf, "min", na.rm = TRUE)[[1]], 4),
-    "\u2013", round(global(suit_rf, "max", na.rm = TRUE)[[1]], 4), "\n")
-
-# ---------------------- Surface comparison ----------------------------------
-
-set.seed(SEED)
-valid_cells <- which(!is.na(values(suit_mx)) & !is.na(values(suit_rf)))
-samp_idx <- sample(valid_cells, min(50000, length(valid_cells)))
-
-mx_vals <- values(suit_mx)[samp_idx]
-rf_vals <- values(suit_rf)[samp_idx]
-
-cat("\nSurface correlation (50k sample):\n")
-cat("  Pearson: ", round(cor(mx_vals, rf_vals, method = "pearson"), 3), "\n")
-cat("  Spearman:", round(cor(mx_vals, rf_vals, method = "spearman"), 3), "\n")
-
-# ----------------------- ARP comparison -------------------------------------
-
-pop_aligned <- rast(file.path(DIR_SURFACES, "worldpop_2025_aligned.tif"))
-total_pop   <- global(pop_aligned, "sum", na.rm = TRUE)[[1]]
-
-# RF thresholds
-rf_pred_occ <- predict(rf_final, data = df[df$pa == "1", ])$predictions[, 2]
-rf_pred_bg  <- predict(rf_final, data = df[df$pa == "0", ])$predictions[, 2]
-
-rf_p10 <- unname(quantile(rf_pred_occ, 0.10))
-
-candidates <- sort(unique(c(rf_pred_occ, rf_pred_bg)))
-sens <- sapply(candidates, function(t) mean(rf_pred_occ >= t))
-spec <- sapply(candidates, function(t) mean(rf_pred_bg  <  t))
-rf_maxsss <- candidates[which.max(sens + spec)]
-
-cat("\nRF p10:   ", round(rf_p10, 4), "\n")
-cat("RF maxSSS:", round(rf_maxsss, 4), "\n")
-
-rf_arp_p10     <- global(pop_aligned * (suit_rf >= rf_p10), "sum", na.rm = TRUE)[[1]]
-rf_arp_maxsss  <- global(pop_aligned * (suit_rf >= rf_maxsss), "sum", na.rm = TRUE)[[1]]
-rf_arp_weighted <- global(pop_aligned * suit_rf, "sum", na.rm = TRUE)[[1]]
-
-# Load MaxEnt ARP for comparison
-mx_arp <- read.csv(file.path(DIR_TABLES, "arp_summary.csv"))
-
-cat("\n--- ARP comparison ---\n")
-cat(sprintf("%-20s %12s %12s\n", "", "MaxEnt", "RF"))
-cat(sprintf("%-20s %12s %12s\n", "p10 binary",
-    format(round(mx_arp$arp[mx_arp$metric == "p10"]), big.mark = ","),
-    format(round(rf_arp_p10), big.mark = ",")))
-cat(sprintf("%-20s %12s %12s\n", "maxSSS binary",
-    format(round(mx_arp$arp[mx_arp$metric == "maxSSS"]), big.mark = ","),
-    format(round(rf_arp_maxsss), big.mark = ",")))
-cat(sprintf("%-20s %12s %12s\n", "Risk-weighted",
-    format(round(mx_arp$arp[mx_arp$metric == "risk_weighted"]), big.mark = ","),
-    format(round(rf_arp_weighted), big.mark = ",")))
-
-# Save comparison table
-arp_comp <- data.frame(
-  metric = c("p10", "maxSSS", "risk_weighted"),
-  maxent = mx_arp$arp,
-  rf     = c(round(rf_arp_p10), round(rf_arp_maxsss), round(rf_arp_weighted))
-)
-write.csv(arp_comp, file.path(DIR_TABLES, "arp_full_comparison.csv"), row.names = FALSE)
-
-# -------------------- Partial dependence plots ------------------------------
-
-set.seed(SEED)
-samp_rows <- sample(nrow(df), 500)
-base_data <- df[samp_rows, vars]
-
-var_labels <- c(
-  slope      = "Slope (\u00b0)",
-  river_dist = "River distance (m)",
-  vertisols  = "Vertisols (binary)",
-  lst_night  = "LST night (\u00b0C)",
-  rainfall   = "Rainfall (mm)"
-)
-
-compute_pdp <- function(var_name, grid_n = 50) {
-  var_seq <- seq(min(df[[var_name]]), max(df[[var_name]]), length.out = grid_n)
-
-  mx_means <- rf_means <- numeric(grid_n)
-
-  for (i in seq_along(var_seq)) {
-    modified <- base_data
-    modified[[var_name]] <- var_seq[i]
-
-    mx_means[i] <- mean(predict(mod, modified, type = "cloglog")[, 1])
-    rf_means[i] <- mean(predict(rf_final, data = modified)$predictions[, 2])
-  }
-
-  data.frame(
-    variable    = var_name,
-    value       = rep(var_seq, 2),
-    suitability = c(mx_means, rf_means),
-    model       = rep(c("MaxEnt", "RF"), each = grid_n)
-  )
-}
-
-cat("Computing PDPs...\n")
-pdp_all <- bind_rows(lapply(vars, function(v) {
-  cat("  ", v, "\n")
-  compute_pdp(v)
+cat("\nRandom forest CV,", RF_NTREES, "trees per forest:\n")
+rf_cvs <- lapply(seq_along(vars), function(m) {
+  cv <- cv_fit(pa, env, fold, function(p, d) fit_rf(p, d, m), rf_prob, within = wet)
+  cat(sprintf("  mtry %d | CBI %.3f (SD %.3f) | within-belt CBI %.3f | AUC %.3f\n",
+              m, mean(cv$cbi), sd(cv$cbi), mean(cv$cbi_wet), mean(cv$auc)))
+  cv
+})
+rf_tune <- bind_rows(lapply(seq_along(rf_cvs), function(m) {
+  cv <- rf_cvs[[m]]
+  data.frame(mtry = m, n_cbi = sum(!is.na(cv$cbi)),
+             cbi = mean(cv$cbi, na.rm = TRUE), cbi_sd = sd(cv$cbi, na.rm = TRUE),
+             cbi_wet = mean(cv$cbi_wet, na.rm = TRUE), auc = mean(cv$auc),
+             or_10p = mean(cv$or_10p))
 }))
+scored <- filter(rf_tune, n_cbi == K_FOLDS)
+stopifnot("No mtry was scored on every fold" = nrow(scored) > 0)
+best_mtry <- scored$mtry[which.max(scored$cbi)]
+rf_cv     <- rf_cvs[[best_mtry]]
+cat("Selected mtry:", best_mtry, "\n")
 
-pdp_all$facet_label <- var_labels[pdp_all$variable]
+# ------------------------ Random forest: final model ------------------------
+# Every tree must draw exactly as many presences and as many background
+# points as there are presences: the sampling the comparison assumes.
 
-p_pdp <- ggplot(pdp_all, aes(x = value, y = suitability, colour = model)) +
-  geom_line(linewidth = 0.8) +
-  facet_wrap(~ facet_label, scales = "free_x", ncol = 3) +
-  scale_colour_manual(values = c("MaxEnt" = "steelblue", "RF" = "firebrick")) +
-  labs(x = NULL, y = "Predicted suitability", colour = NULL) +
-  theme_minimal(base_size = 11) +
-  theme(legend.position = "top",
-        panel.grid.minor = element_blank(),
-        strip.text = element_text(face = "bold"))
+rf    <- fit_rf(pa, env, best_mtry, keep.inbag = TRUE)
+inbag <- do.call(cbind, rf$inbag.counts)
+n1    <- sum(pa == 1)
+stopifnot("A tree's sample is not balanced" =
+  all(colSums(inbag[pa == 1, ]) == n1) && all(colSums(inbag[pa == 0, ]) == n1))
+cat("Every tree drew", n1, "presences and", n1, "background points;",
+    "distinct presences per tree, median", median(colSums(inbag[pa == 1, ] > 0)), "\n")
 
-ggsave(file.path(DIR_FIGS, "pdp_maxent_vs_rf.png"), p_pdp,
-       width = 10, height = 7, dpi = 300, bg = "white")
-cat("Saved pdp_maxent_vs_rf.png\n")
+# Thresholds from out-of-bag predictions: at its own training points a forest
+# predicts close to what it was grown on. In-sample thresholds are printed as
+# the diagnostic.
+oob <- rf$predictions[, "1"]
+stopifnot("A training point was never out of bag" = !anyNA(oob))
+rf_thr    <- thresholds_from(oob[pa == 1], oob[pa == 0])
+rf_thr_in <- thresholds_from(rf_prob(rf, occ_env), rf_prob(rf, bg_env))
+cat(sprintf("RF thresholds | out-of-bag: p10 %.3f, maxSSS %.3f | in-sample: p10 %.3f, maxSSS %.3f\n",
+            rf_thr[["p10"]], rf_thr[["maxsss"]], rf_thr_in[["p10"]], rf_thr_in[["maxsss"]]))
 
-# -------------------- Side-by-side suitability maps -------------------------
+rf$inbag.counts <- NULL
+saveRDS(rf, RF_MODEL_FILE)
 
-adm0 <- gadm(country = "SDN", level = 0, path = here::here("data", "raw"))
-sudan <- st_as_sf(adm0)
+cat("Predicting the forest over the domain...\n")
+rf_surf <- terra::predict(covs, rf, fun = rf_prob, na.rm = TRUE)
+names(rf_surf) <- "suitability"
+writeRaster(rf_surf, RF_SUIT_FILE, overwrite = TRUE)
+rf_surf <- rast(RF_SUIT_FILE)   # saved (FLT4S) values, as 17 reads them
+stopifnot("RF surface covers different cells from SUIT_FILE" =
+  global(is.na(rf_surf) != is.na(suit_r), "sum")[[1]] == 0)
+cat("RF surface range:", paste(round(minmax(rf_surf)[, 1], 3), collapse = " to "), "\n")
 
-suit_mx_masked <- mask(suit_mx, vect(sudan))
-suit_rf_masked <- mask(suit_rf, vect(sudan))
+# ------------------------------ Comparison ----------------------------------
+se_mx   <- sd(mx_cv$cbi) / sqrt(K_FOLDS)
+plateau <- max(abs(cand_08$change_vs_selected[startsWith(cand_08$candidate, paste0(tuning$fc, " "))]))
+rf_arp  <- arp_estimates(rf_surf, pop, rf_thr)
 
-mx_df <- as.data.frame(suit_mx_masked, xy = TRUE, na.rm = TRUE)
-rf_df <- as.data.frame(suit_rf_masked, xy = TRUE, na.rm = TRUE)
-names(mx_df)[3] <- names(rf_df)[3] <- "suitability"
+v_mx <- values(suit_r,  mat = FALSE)
+v_rf <- values(rf_surf, mat = FALSE)
+ok   <- !is.na(v_mx)
+belt <- values(belt_r, mat = FALSE) %in% 1
+rho  <- c(domain = cor(v_mx[ok], v_rf[ok], method = "spearman"),
+          belt   = cor(v_mx[ok & belt], v_rf[ok & belt], method = "spearman"))
 
-suit_colours <- c("#2166AC", "#67A9CF", "#D1E5F0", "#FDDBC7",
-                  "#EF8A62", "#B2182B")
+summary_df <- bind_rows(
+  comparator_row("maxent", paste(tuning$fc, "rm", tuning$rm), mx_cv, mx_thr, mx_arp),
+  comparator_row("rf", paste("mtry", best_mtry), rf_cv, rf_thr, rf_arp, rho)
+) |> vs_primary(se_mx, plateau)
 
-p_mx <- ggplot() +
-  geom_sf(data = sudan, fill = "grey90", colour = "grey30", linewidth = 0.5) +
-  geom_raster(data = mx_df, aes(x, y, fill = suitability)) +
-  scale_fill_gradientn(colours = suit_colours, limits = c(0, 1),
-                       na.value = "transparent", name = "Habitat\nsuitability") +
-  geom_sf(data = sudan, fill = NA, colour = "grey30", linewidth = 0.5) +
-  coord_sf(xlim = c(21.5, 39), ylim = c(8.5, 22.5), crs = 4326) +
-  labs(title = "MaxEnt (LQH, rm = 1.0)") +
-  theme_minimal() +
-  theme(panel.grid = element_blank(), axis.title = element_blank(),
-        legend.position = "none")
+cat("\nCV CBI by fold (all of Sudan; within >= 150 mm):\n")
+data.frame(fold = mx_cv$fold, test_presences = mx_cv$n_test_pres,
+           maxent = mx_cv$cbi, rf = rf_cv$cbi,
+           maxent_belt = mx_cv$cbi_wet, rf_belt = rf_cv$cbi_wet) |>
+  mutate(across(maxent:rf_belt, ~ round(., 3))) |> print(row.names = FALSE)
 
-p_rf <- ggplot() +
-  geom_sf(data = sudan, fill = "grey90", colour = "grey30", linewidth = 0.5) +
-  geom_raster(data = rf_df, aes(x, y, fill = suitability)) +
-  scale_fill_gradientn(colours = suit_colours, limits = c(0, 1),
-                       na.value = "transparent", name = "Habitat\nsuitability") +
-  geom_sf(data = sudan, fill = NA, colour = "grey30", linewidth = 0.5) +
-  annotation_scale(location = "bl", width_hint = 0.2) +
-  coord_sf(xlim = c(21.5, 39), ylim = c(8.5, 22.5), crs = 4326) +
-  labs(title = "Random Forest (mtry = 1)") +
-  theme_minimal() +
-  theme(panel.grid = element_blank(), axis.title = element_blank())
+cat("\nFit | one SE below MaxEnt's CBI:", round(summary_df$cv_cbi[1] - se_mx, 3), "\n")
+summary_df |>
+  select(model, config, cv_cbi, cv_cbi_sd, cv_cbi_wet, cv_auc, cv_or_10p, cbi_within_se) |>
+  mutate(across(where(is.double), ~ round(., 3))) |> print(row.names = FALSE)
 
-p_maps <- p_mx + p_rf +
-  plot_layout(guides = "collect") &
-  theme(legend.position = "bottom")
+cat("\nPopulation at risk | plateau spread: +/-", round(plateau, 1), "%\n")
+summary_df |>
+  select(model, arp_weighted, rw_change_pct, beyond_plateau, arp_maxsss, maxsss, arp_p10, p10) |>
+  mutate(across(c(arp_weighted, arp_maxsss, arp_p10), fmt),
+         rw_change_pct = round(rw_change_pct, 1),
+         across(c(maxsss, p10), ~ round(., 3))) |>
+  print(row.names = FALSE)
 
-ggsave(file.path(DIR_FIGS, "suitability_maxent_vs_rf.png"), p_maps,
-       width = 12, height = 6, dpi = 300, bg = "white")
-cat("Saved suitability_maxent_vs_rf.png\n")
+cat(sprintf("\nSurface rank agreement (Spearman): domain %.3f | within >= 150 mm %.3f\n",
+            rho[["domain"]], rho[["belt"]]))
 
-cat("09_rf_comparator.R complete\n")
+# -------------------------------- States ------------------------------------
+
+zones     <- state_zones(suit_r)
+rw        <- c(pop * suit_r, pop * rf_surf)
+names(rw) <- c("maxent", "rf")
+state_df  <- zonal(rw, zones, fun = "sum", na.rm = TRUE)
+names(state_df)[1] <- "state"
+stopifnot("States do not sum to the national estimates" =
+  all(abs(colSums(state_df[c("maxent", "rf")]) / summary_df$arp_weighted - 1) < POP_TOL))
+state_df <- state_df |>
+  mutate(rf_pct       = round(100 * (rf / maxent - 1), 1),
+         share_maxent = round(100 * maxent / sum(maxent), 1),
+         share_rf     = round(100 * rf / sum(rf), 1)) |>
+  arrange(desc(maxent))
+rho_state <- cor(state_df$maxent, state_df$rf, method = "spearman")
+
+cat("\nRisk-weighted by state (RF change, %; share of national, %) | state rank agreement",
+    round(rho_state, 3), "\n")
+state_df |> mutate(across(c(maxent, rf), fmt)) |> print(right = FALSE, row.names = FALSE)
+
+# ---------------------------- Response curves -------------------------------
+# Both models with the others at the presence median, as 07. Descriptive. The
+# rainfall decline is the fragile finding (10, 12, 15, 24): for each model,
+# suitability at the wettest presence as a percentage of its peak.
+
+rf_curves <- response_curves(rf, ref, env, vars, pred = rf_prob)
+feat <- bind_rows(data.frame(model = "maxent", curve_table(mx_curves)),
+                  data.frame(model = "rf",     curve_table(rf_curves))) |>
+  arrange(variable, model)
+cat("\nResponse-curve positions (others at the presence median):\n")
+feat |> mutate(across(where(is.numeric), ~ signif(., 3))) |> print(row.names = FALSE)
+
+rain_max <- max(occ_env$rainfall)
+at_wet <- sapply(list(maxent = mx_curves, rf = rf_curves), pct_of_peak,
+                 var = "rainfall", x = rain_max)
+cat(sprintf("Rainfall at the wettest presence (%.0f mm), %% of peak: MaxEnt %.0f | RF %.0f\n",
+            rain_max, at_wet[["maxent"]], at_wet[["rf"]]))
+vert <- sapply(list(maxent = mx_curves, rf = rf_curves),
+               function(cv) cv$suit[cv$variable == "vertisols"])
+cat("Vertisols, suitability off / on: MaxEnt", round(vert[, "maxent"], 3),
+    "| RF", round(vert[, "rf"], 3), "\n")
+
+# --------------------------------- Save -------------------------------------
+
+summary_df$rho_states          <- c(NA_real_, rho_state)
+summary_df$rain_at_wettest_pct <- unname(at_wet[summary_df$model])
+write.csv(summary_df, COMPARATOR_FILE, row.names = FALSE)
+write.csv(rf_tune,  file.path(DIR_TABLES, "rf_tuning.csv"), row.names = FALSE)
+write.csv(state_df, file.path(DIR_TABLES, "comparator_by_state.csv"), row.names = FALSE)
+write.csv(feat,     file.path(DIR_TABLES, "comparator_curve_features.csv"), row.names = FALSE)
+cat("\n09_rf_comparator.R complete\n")

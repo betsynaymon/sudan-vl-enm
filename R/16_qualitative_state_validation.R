@@ -1,120 +1,87 @@
 # ============================================================================
 # 16_qualitative_state_validation.R
-# Compares model-predicted suitability against independently documented VL
-# endemic status per state. Tests whether the model recovers the broad
-# geographic hierarchy of VL burden without any state-level information
-# entering the training process.
+# Does predicted suitability follow the literature's ranking of states by VL
+# endemicity (STATE_STATUS_FILE)? Core-endemic status rests largely on the
+# literature that supplied the presences, so states with training records
+# rank high partly by construction; the informative comparison is among
+# states with no training presence. Reported for area-mean suitability
+# (habitat) and population-weighted suitability (what the estimate uses).
 #
-# Inputs:  outputs/surfaces/maxent_suitability.tif
-#          data/raw/gadm/ (state boundaries)
+# Inputs:  SUIT_FILE, POP_ALIGNED_FILE, TRAIN_FILE, DOMAIN_FILE, ADM1_FILE,
+#          STATE_STATUS_FILE
 # Outputs: outputs/tables/state_validation.csv
 # ============================================================================
 
 source(here::here("R", "params.R"))
+source(here::here("R", "helpers.R"))
 
 suppressPackageStartupMessages({
-  library(terra)
-  library(sf)
-  library(dplyr)
-  library(geodata)
+  library(terra); library(dplyr)
 })
 
-# -------------------- Literature-based classification -----------------------
+status_levels <- c("No documented", "Reported", "Core endemic")
 
-lit <- tribble(
-  ~state,            ~status,           ~evidence,
-  "Al Qadarif",      "Core endemic",    "Principal endemic focus",
-  "Blue Nile",       "Core endemic",    "Historical endemic belt",
-  "Sennar",          "Core endemic",    "Historical endemic belt",
-  "Kassala",         "Core endemic",    "Historical endemic belt",
-  "White Nile",      "Core endemic",        "Evidence of shift to endemic status",
-  "South Kurdufan",  "Reported",        "Scattered foci",
-  "North Kurdufan",  "Reported",        "Scattered foci",
-  "West Kurdufan",   "Reported",        "Cited under regional Kordofan grouping",
-  "North Darfur",    "Reported",        "Secondary VL focus",
-  "South Darfur",    "Reported",        "Scattered foci",
-  "Central Darfur",  "No documented",        "Created 2012 from West and South Darfur; both documented",
-  "East Darfur",     "Reported",        "Darfur foci",
-  "West Darfur",     "Reported",        "Scattered historically-reported foci",
-  "Al Jazirah",      "Reported",        "Historical outbreaks; current scattered endemicity",
-  "Red Sea",         "Reported",        "New foci added to control strategy in 2017",
-  "Khartoum",        "Reported",       "Sporadic cases in 1960s; potentially imported currently",
-  "River Nile",      "No documented",   "No published VL transmission",
-  "Northern",        "No documented",   "No published VL transmission"
+# ------------------------------ Load inputs ---------------------------------
+
+suit_r <- rast(SUIT_FILE)
+pop    <- rast(POP_ALIGNED_FILE)
+train  <- readRDS(TRAIN_FILE)
+lit    <- read.csv(STATE_STATUS_FILE)
+zones  <- state_zones(suit_r)
+cat("States classified:", nrow(lit), "| without a source:", sum(lit$source %in% c("", NA)), "\n")
+
+# ---------------------------- State summaries -------------------------------
+# Same state assignment as 08. Population-weighted suitability = 08's
+# risk-weighted estimate / state population.
+
+s_mean <- zonal(suit_r, zones, fun = "mean",   na.rm = TRUE)
+s_med  <- zonal(suit_r, zones, fun = "median", na.rm = TRUE)
+s_pw   <- zonal(c(pop * suit_r, pop), zones, fun = "sum", na.rm = TRUE)
+names(s_mean) <- c("state", "mean_suit")
+names(s_med)  <- c("state", "median_suit")
+names(s_pw)   <- c("state", "rw", "pop")
+occ_state <- as.character(terra::extract(zones,
+               as.matrix(train$occ_clean[, c("longitude", "latitude")]))[, 1])
+
+stopifnot(
+  "State names differ between STATE_STATUS_FILE and ADM1_FILE" = setequal(lit$state, s_mean$state),
+  "Unknown status in STATE_STATUS_FILE" = all(lit$status %in% status_levels)
 )
 
-cat("States classified:", nrow(lit), "\n")
+val <- lit |>
+  left_join(s_mean, by = "state") |> left_join(s_med, by = "state") |>
+  left_join(s_pw, by = "state") |>
+  mutate(pop_weighted_suit = rw / pop,
+         n_presences = as.integer(table(factor(occ_state, levels = state))),
+         status = factor(status, levels = status_levels)) |>
+  arrange(desc(status), desc(pop_weighted_suit))
+stopifnot("Not every presence was assigned to a state" =
+            sum(val$n_presences) == nrow(train$occ_clean))
 
-# --------------------- Extract suitability per state ------------------------
+# ------------------------------- Agreement ----------------------------------
 
-suit <- rast(file.path(DIR_SURFACES, "maxent_suitability.tif"))
-adm1 <- gadm(country = "SDN", level = 1, path = here::here("data", "raw"))
-states <- st_as_sf(adm1)
-
-state_stats <- data.frame()
-
-for (i in seq_len(nrow(states))) {
-  state_poly <- vect(states[i, ])
-  vals <- terra::extract(suit, state_poly, ID = FALSE)[[1]]
-  vals <- vals[!is.na(vals)]
-
-  state_stats <- rbind(state_stats, data.frame(
-    state       = states$NAME_1[i],
-    mean_suit   = round(mean(vals), 4),
-    median_suit = round(median(vals), 4),
-    max_suit    = round(max(vals), 4),
-    n_cells     = length(vals)
-  ))
+rho <- function(d, col) {
+  ct <- suppressWarnings(cor.test(as.integer(d$status), d[[col]],
+                                  method = "spearman", exact = FALSE))
+  c(states = nrow(d), rho = unname(ct$estimate), p = ct$p.value)
 }
+no_pres <- filter(val, n_presences == 0)
+agree <- rbind(
+  `All states, area mean`            = rho(val, "mean_suit"),
+  `All states, population-weighted`  = rho(val, "pop_weighted_suit"),
+  `No presences, area mean`          = rho(no_pres, "mean_suit"),
+  `No presences, population-weighted` = rho(no_pres, "pop_weighted_suit")
+)
+cat("\nSpearman rho, endemic status vs suitability:\n"); print(round(agree, 3))
 
-state_stats <- state_stats |> arrange(desc(mean_suit))
+cat("\nBy state (status, then population-weighted suitability):\n")
+val |> select(state, status, n_presences, mean_suit, median_suit, pop_weighted_suit) |>
+  mutate(across(c(mean_suit, median_suit, pop_weighted_suit), ~ round(., 3))) |>
+  print(row.names = FALSE, right = FALSE)
 
-cat("\nState-level suitability summary:\n")
-cat(sprintf("%-18s %10s %10s %10s\n", "State", "Mean", "Median", "Max"))
-for (i in seq_len(nrow(state_stats))) {
-  cat(sprintf("%-18s %10.4f %10.4f %10.4f\n",
-              state_stats$state[i],
-              state_stats$mean_suit[i],
-              state_stats$median_suit[i],
-              state_stats$max_suit[i]))
-}
-
-# ----------------------- Join and summarise ---------------------------------
-
-validation <- lit |>
-  left_join(state_stats, by = "state") |>
-  arrange(desc(mean_suit))
-
-if (any(is.na(validation$mean_suit))) {
-  cat("WARNING — unmatched states:\n")
-  print(validation$state[is.na(validation$mean_suit)])
-}
-
-cat("\n--- Mean suitability by endemic status ---\n")
-validation |>
-  group_by(status) |>
-  summarise(
-    n         = n(),
-    range     = paste0(round(min(mean_suit), 3), "\u2013", round(max(mean_suit), 3)),
-    mean_suit = round(mean(mean_suit), 3),
-    .groups   = "drop"
-  ) |>
-  arrange(desc(mean_suit)) |>
-  print()
-
-cat("\n--- Full table ---\n")
-validation |>
-  select(state, status, mean_suit, median_suit, max_suit) |>
-  print(n = 18)
-
-validation <- validation |>
-  mutate(status_rank = match(status, c("No documented", "Reported", "Core endemic")))
-rho_state <- cor(validation$status_rank, validation$mean_suit, method = "spearman")
-cat("Spearman rho (status rank vs mean suitability):", round(rho_state, 2), "\n")
 # --------------------------------- Save -------------------------------------
 
-write.csv(validation |> select(state, status, evidence, mean_suit, median_suit, max_suit, n_cells),
+write.csv(select(val, state, status, evidence, source, n_presences,
+                 mean_suit, median_suit, pop_weighted_suit),
           file.path(DIR_TABLES, "state_validation.csv"), row.names = FALSE)
-
-cat("\nSaved:", file.path(DIR_TABLES, "state_validation.csv"), "\n")
 cat("16_qualitative_state_validation.R complete\n")

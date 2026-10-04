@@ -89,13 +89,13 @@ pal_mess_binary <- c(
     "Interpolation"  = "#4393C3"
 )
 
-# — Model comparison (PDP, robustness) —
-# Example: scale_colour_manual(values = pal_models)
+# — Algorithms (17) —
 pal_models <- c(
-    "MaxEnt" = "#4575B4",    # steel blue
-    "RF"     = "#A50026",    # dark red
-    "GBT"    = "#E66101"     # orange
+    maxent = "#4575B4",    # steel blue
+    rf     = "#A50026",    # dark red
+    gbt    = "#E66101"     # orange
 )
+model_labels <- c(maxent = "MaxEnt", rf = "Random forest", gbt = "Boosted trees")
 
 # — Occurrence types (for study area map) —
 pal_occurrences <- c(
@@ -111,10 +111,51 @@ pal_access <- c(
     "Background, in presence range" = "#4575B4"    # steel blue
 )
 
+# — Accessibility-corrected backgrounds (12) —
+pal_bias <- c(
+    uniform = "#969696",   # grey
+    half    = "#91BFDB",   # light blue
+    matched = "#4575B4"    # steel blue
+)
+
 # — Threshold reference lines —
 col_p10    <- "#4575B4"   # blue, liberal threshold
 col_maxsss <- "#A50026"   # dark red, conservative threshold
 col_observed <- "#A50026"   # observed statistic against a null distribution (13)
+
+# — Covariate labels (07, 24, 15) —
+cov_labels <- c(
+  slope         = "Slope (degrees)",
+  river_dist    = "Distance to river (m)",
+  vertisols     = "Vertisols (0/1)",
+  lst_night     = "LST night (\u00b0C)",
+  rainfall      = "Rainfall (mm/yr)",
+  travel_time   = "Travel time (min)",
+  elevation     = "Elevation (m)",
+  lst_day       = "LST day (\u00b0C)",
+  ndvi          = "NDVI",
+  treecover     = "Tree cover (%)",
+  lst_night_dry = "LST night, dry season (\u00b0C)",
+  lst_night_wet = "LST night, wet season (\u00b0C)"
+)
+
+# — Covariate variants (15) —
+pal_variants <- c(
+  primary        = "grey30",
+  lst_dry        = "#B15928",
+  lst_wet        = "#5E3C99",
+  ndvi_for_rain  = "#1B9E77",
+  plus_lst_day   = "#D95F02",
+  plus_treecover = "#7570B3",
+  plus_elevation = "#E7298A",
+  minus_river    = "#A6761D"
+)
+
+# — Accessibility covariate test (24) —
+pal_tt <- c(primary = "#969696", augmented = "#4575B4")
+
+# — Darfur vs the rest (20) —
+pal_region <- c("Rest of Sudan" = "#B2182B", "Darfur" = "#2166AC")
 
 # ----------------------------------------------------------------------------
 # 4. BASE THEME (non-map figures)
@@ -259,15 +300,10 @@ layer_occurrences <- function(data, mapping = aes(), size = 1.8,
           fill = fill, colour = colour, ...)
 }
 
-# Area outside the modelled domain (Halaib Triangle): grey, labelled at its
-# centroid
-layer_excluded <- function(data, label = "Halaib Triangle\n(not modelled)", size = 2) {
-  cen <- sf::st_coordinates(sf::st_centroid(sf::st_geometry(data)))
-  list(
-    ggplot2::geom_sf(data = data, fill = "grey80", colour = NA),
-    ggplot2::annotate("text", x = cen[1, "X"], y = cen[1, "Y"],
-                      label = label, size = size, lineheight = 0.9)
-  )
+# Area outside the modelled domain (Halaib Triangle): grey, unlabelled
+# (figure captions identify it)
+layer_excluded <- function(data) {
+  ggplot2::geom_sf(data = data, fill = "grey80", colour = NA)
 }
 # ----------------------------------------------------------------------------
 # 8. SET DEFAULTS

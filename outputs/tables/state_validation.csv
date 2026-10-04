@@ -1,0 +1,19 @@
+"state","status","evidence","source","n_presences","mean_suit","median_suit","pop_weighted_suit"
+"Blue Nile","Core endemic","Historical endemic belt",NA,0,0.735228781359479,0.794275939464569,0.846769060932109
+"Al Qadarif","Core endemic","Principal endemic focus",NA,77,0.614663937921162,0.654452621936798,0.831678929410905
+"Sennar","Core endemic","Historical endemic belt",NA,7,0.680693295440931,0.733201503753662,0.640741022516169
+"Kassala","Core endemic","Historical endemic belt",NA,0,0.304779939103491,0.277483209967613,0.456043416580894
+"White Nile","Core endemic","Evidence of shift to endemic status",NA,3,0.308588234371352,0.279308587312698,0.347059789624926
+"South Kurdufan","Reported","Scattered foci",NA,1,0.473198184680069,0.475294440984726,0.385326598708472
+"West Kurdufan","Reported","Cited under regional Kordofan grouping",NA,1,0.376906273998751,0.265011832118034,0.323673316953119
+"Khartoum","Reported","Sporadic cases in 1960s; potentially imported currently",NA,5,0.243757577420942,0.220725104212761,0.253028304285426
+"Al Jazirah","Reported","Historical outbreaks; current scattered endemicity",NA,3,0.19203637334443,0.16788637638092,0.24043674084486
+"East Darfur","Reported","Darfur foci",NA,0,0.340776297619358,0.353197813034058,0.203705126530951
+"North Kurdufan","Reported","Scattered foci",NA,0,0.100011482246599,0.0721170641481876,0.142083615790049
+"South Darfur","Reported","Scattered foci",NA,1,0.180524784298548,0.166246838867664,0.117871109137233
+"Red Sea","Reported","New foci added to control strategy in 2017",NA,0,0.0646416168220747,0.0303078033030033,0.102078294620164
+"West Darfur","Reported","Scattered historically-reported foci",NA,0,0.0901127540748703,0.0550903622061014,0.0865106109487345
+"North Darfur","Reported","Secondary VL focus",NA,5,0.0265592294355383,0.00833783205598593,0.0529238124309392
+"River Nile","No documented","No published VL transmission",NA,0,0.073676586398549,0.0349138453602791,0.096241369534399
+"Central Darfur","No documented","Created 2012 from West and South Darfur; both documented",NA,0,0.126753730117065,0.0930639244616032,0.0846998443700674
+"Northern","No documented","No published VL transmission",NA,0,0.00887196383954034,0.00526540377177298,0.0145433518232044

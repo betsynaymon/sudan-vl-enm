@@ -1,0 +1,104 @@
+"coordinate_id","source","source_type","presence_type","year","longitude","latitude","state","region","fold","map_suit","heldout_pred","heldout_below"
+1,"Pigott_et_al_2014_Dryad","Pigott database","vl_case",2000,36.049,13.964,"Al Qadarif","Rest of Sudan",3,0.96817934513092,0.963597484210755,FALSE
+2,"Pigott_et_al_2014_Dryad","Pigott database","vl_case",2000,36.13,13.65,"Al Qadarif","Rest of Sudan",3,0.882925152778625,0.792733518314218,FALSE
+3,"Pigott_et_al_2014_Dryad","Pigott database","vl_case",2000,35.417175,13.851414,"Al Qadarif","Rest of Sudan",4,0.941777050495148,0.852998264392242,FALSE
+4,"Pigott_et_al_2014_Dryad","Pigott database","vl_case",2001,32.532,15.548,"Khartoum","Rest of Sudan",2,0.331416487693787,0.140181833440615,TRUE
+5,"Pigott_et_al_2014_Dryad","Pigott database","vl_case",2001,32.61,15.5,"Khartoum","Rest of Sudan",2,0.152408078312874,0.0425039608856517,TRUE
+6,"Pigott_et_al_2014_Dryad","Pigott database","vl_case",2001,33.51,14.46,"Al Jazirah","Rest of Sudan",2,0.199859410524368,0.0340267447427741,TRUE
+7,"Pigott_et_al_2014_Dryad","Pigott database","vl_case",2001,35.4,14.03,"Al Qadarif","Rest of Sudan",4,0.914725184440613,0.680895390167573,FALSE
+8,"Pigott_et_al_2014_Dryad","Pigott database","vl_case",2001,32.476,15.645,"Khartoum","Rest of Sudan",2,0.27655366063118,0.16233000118074,TRUE
+98,"elnaiem_et_al_2003_fig1","Peer-reviewed","vl_case",2001,35.46397,13.85924,"Al Qadarif","Rest of Sudan",4,0.984707951545715,0.605156071202531,FALSE
+99,"elnaiem_et_al_2003_fig1","Peer-reviewed","vl_case",2001,35.39755,13.85632,"Al Qadarif","Rest of Sudan",4,0.837945222854614,0.569995851349753,FALSE
+100,"elnaiem_et_al_2003_fig1","Peer-reviewed","vl_case",2001,35.44335,13.79193,"Al Qadarif","Rest of Sudan",4,0.982280015945435,0.750787868923354,FALSE
+101,"elnaiem_et_al_2003_fig1","Peer-reviewed","vl_case",2001,35.81898,13.7217,"Al Qadarif","Rest of Sudan",4,0.877558648586273,0.497852764375016,FALSE
+102,"elnaiem_et_al_2003_fig1","Peer-reviewed","vl_case",2001,35.92892,13.58708,"Al Qadarif","Rest of Sudan",4,0.745648860931396,0.666451138184031,FALSE
+103,"elnaiem_et_al_2003_fig1","Peer-reviewed","vl_case",2001,36.10527,13.50514,"Al Qadarif","Rest of Sudan",3,0.979041635990143,0.913400542171667,FALSE
+104,"elnaiem_et_al_2003_fig1","Peer-reviewed","vl_case",2001,36.1465,13.53441,"Al Qadarif","Rest of Sudan",3,0.992969870567322,0.941524649875761,FALSE
+105,"elnaiem_et_al_2003_fig1","Peer-reviewed","vl_case",2001,35.05857,12.98131,"Al Qadarif","Rest of Sudan",1,0.901895642280579,0.824307460672925,FALSE
+106,"elnaiem_et_al_2003_fig1","Peer-reviewed","vl_case",2001,34.99215,13.03106,"Al Qadarif","Rest of Sudan",1,0.878444075584412,0.837626867551213,FALSE
+107,"elnaiem_et_al_2003_fig1","Peer-reviewed","vl_case",2001,34.95321,13.07496,"Al Qadarif","Rest of Sudan",1,0.854099750518799,0.654015794283377,FALSE
+108,"elnaiem_et_al_2003_fig1","Peer-reviewed","vl_case",2001,35.22348,12.8145,"Sennar","Rest of Sudan",1,0.847200095653534,0.695549633572935,FALSE
+10,"Pigott_et_al_2014_Dryad","Pigott database","vl_case",2002,33.93,13.15,"Sennar","Rest of Sudan",2,0.909849345684052,0.565277129824096,FALSE
+11,"Pigott_et_al_2014_Dryad","Pigott database","vl_case",2002,35.4,14.03,"Al Qadarif","Rest of Sudan",4,0.914725184440613,0.772808648657944,FALSE
+12,"Pigott_et_al_2014_Dryad","Pigott database","vl_case",2002,33.63,13.55,"Sennar","Rest of Sudan",2,0.406487315893173,0.131480607829334,TRUE
+13,"Pigott_et_al_2014_Dryad","Pigott database","vl_case",2002,33.51,14.46,"Al Jazirah","Rest of Sudan",2,0.199859410524368,0.0416602053231059,TRUE
+97,"Hassan_et_al_2009","Peer-reviewed","vector_pos",2002,35.14426792,12.89855849,"Al Qadarif","Rest of Sudan",1,0.932578921318054,0.781753521220015,FALSE
+15,"Pigott_et_al_2014_Dryad","Pigott database","vl_case",2003,32.53,15.58,"Khartoum","Rest of Sudan",2,0.353431344032288,0.197903168131404,TRUE
+16,"Pigott_et_al_2014_Dryad","Pigott database","vl_case",2003,35.4,14.03,"Al Qadarif","Rest of Sudan",4,0.914725184440613,0.863447580195622,FALSE
+96,"Sharief_et_al_2019","Peer-reviewed","vl_case",2003,27.72992493,11.03020054,"West Kurdufan","Rest of Sudan",1,0.495623767375946,0.551522744935422,FALSE
+109,"gerstl_et_al_2006_fig1","Peer-reviewed","vl_case",2003,35.9508,12.87508,"Al Qadarif","Rest of Sudan",1,0.793523609638214,0.901005881992727,FALSE
+17,"Pigott_et_al_2014_Dryad","Pigott database","vl_case",2004,35.368652,13.859414,"Al Qadarif","Rest of Sudan",4,0.843623340129852,0.537020374614865,FALSE
+19,"Pigott_et_al_2014_Dryad","Pigott database","vl_case",2004,35.747681,13.544541,"Al Qadarif","Rest of Sudan",4,0.990956485271454,0.818904112650297,FALSE
+20,"Pigott_et_al_2014_Dryad","Pigott database","vl_case",2004,35.4,14.01,"Al Qadarif","Rest of Sudan",4,0.910829842090607,0.717596083346288,FALSE
+110,"gerstl_et_al_2006_fig1","Peer-reviewed","vl_case",2004,35.94256,13.16219,"Al Qadarif","Rest of Sudan",4,0.975763320922852,0.84689267814129,FALSE
+21,"Pigott_et_al_2014_Dryad","Pigott database","vl_case",2005,35.368652,13.859414,"Al Qadarif","Rest of Sudan",4,0.843623340129852,0.799390361230766,FALSE
+23,"Pigott_et_al_2014_Dryad","Pigott database","vl_case",2005,35.382042,14.037342,"Al Qadarif","Rest of Sudan",4,0.990872025489807,0.99168674355167,FALSE
+24,"Pigott_et_al_2014_Dryad","Pigott database","vl_case",2005,35.747681,13.544541,"Al Qadarif","Rest of Sudan",4,0.990956485271454,0.801707907279357,FALSE
+79,"Hassan_et_al_2008","Peer-reviewed","vector_pos",2005,35.4833,12.6025,"Sennar","Rest of Sudan",1,0.804203391075134,0.61825551483986,FALSE
+111,"gerstl_et_al_2006_fig1","Peer-reviewed","vl_case",2005,36.16317,13.63419,"Al Qadarif","Rest of Sudan",3,0.867749392986298,0.741351194310451,FALSE
+25,"Pigott_et_al_2014_Dryad","Pigott database","vl_case",2006,35.368652,13.859414,"Al Qadarif","Rest of Sudan",4,0.843623340129852,0.786203578721045,FALSE
+26,"Pigott_et_al_2014_Dryad","Pigott database","vl_case",2006,36.121216,13.581921,"Al Qadarif","Rest of Sudan",3,0.998741805553436,0.952840506746361,FALSE
+27,"Pigott_et_al_2014_Dryad","Pigott database","vl_case",2006,35.747681,13.512497,"Al Qadarif","Rest of Sudan",4,0.990056216716766,0.88849225493708,FALSE
+112,"gerstl_et_al_2006_fig1","Peer-reviewed","vl_case",2006,36.17761,13.80385,"Al Qadarif","Rest of Sudan",3,0.833070576190948,0.628966914540778,FALSE
+28,"Pigott_et_al_2014_Dryad","Pigott database","vl_case",2007,36.1574,12.9545,"Al Qadarif","Rest of Sudan",2,0.559966206550598,0.311673888765947,TRUE
+29,"Pigott_et_al_2014_Dryad","Pigott database","vl_case",2007,33.5675,13.5671,"Sennar","Rest of Sudan",2,0.541161239147186,0.574667060134157,FALSE
+113,"gerstl_et_al_2006_fig1","Peer-reviewed","vl_case",2007,35.20442,13.77775,"Al Qadarif","Rest of Sudan",4,0.750730395317078,0.66231708856464,FALSE
+30,"Pigott_et_al_2014_Dryad","Pigott database","vl_case",2008,36.1574,12.9545,"Al Qadarif","Rest of Sudan",2,0.559966206550598,0.410880510253597,TRUE
+114,"gerstl_et_al_2006_fig1","Peer-reviewed","vl_case",2008,34.64565,13.49933,"Al Qadarif","Rest of Sudan",1,0.927197635173798,0.922526101321907,FALSE
+31,"Pigott_et_al_2014_Dryad","Pigott database","vl_case",2009,36.1574,12.9545,"Al Qadarif","Rest of Sudan",2,0.559966206550598,0.419430676284449,TRUE
+115,"gerstl_et_al_2006_fig1","Peer-reviewed","vl_case",2009,34.80648,13.22962,"Al Qadarif","Rest of Sudan",1,0.970222473144531,0.931217502147864,FALSE
+32,"Pigott_et_al_2014_Dryad","Pigott database","vl_case",2010,32.4833,12.15,"White Nile","Rest of Sudan",3,0.572025179862976,0.690216789536706,FALSE
+116,"gerstl_et_al_2006_fig1","Peer-reviewed","vl_case",2010,35.34668,13.3536,"Al Qadarif","Rest of Sudan",4,0.988986253738403,0.999378308598843,FALSE
+122,"vandebogaart_et_al_2013_fig1","Peer-reviewed","facility_report",2010,35.39089,14.08516,"Al Qadarif","Rest of Sudan",2,0.738292396068573,0.75128364465008,FALSE
+123,"vandebogaart_et_al_2013_fig2","Peer-reviewed","facility_report",2010,35.43786,13.84901,"Al Qadarif","Rest of Sudan",4,0.992978513240814,0.996565394610934,FALSE
+124,"vandebogaart_et_al_2013_fig3","Peer-reviewed","facility_report",2010,36.19726,13.51343,"Al Qadarif","Rest of Sudan",3,0.960944533348083,0.85806315350574,FALSE
+125,"vandebogaart_et_al_2013_fig4","Peer-reviewed","facility_report",2010,34.3105,13.06599,"Sennar","Rest of Sudan",1,0.908730506896973,0.97012614272782,FALSE
+126,"vandebogaart_et_al_2013_fig5","Peer-reviewed","facility_report",2010,33.87209,12.99142,"Sennar","Rest of Sudan",2,0.657193839550018,0.634085289687649,FALSE
+33,"Pigott_et_al_2014_Dryad","Pigott database","vl_case",2012,25.34936,13.62793,"North Darfur","Darfur",1,0.0623509176075459,0.0694324444356574,TRUE
+34,"Mueller_et_al_2012_Fig2","Peer-reviewed","vl_case",2011,36.03361,13.99488,"Al Qadarif","Rest of Sudan",3,0.987717092037201,0.961256213134612,FALSE
+37,"Mueller_et_al_2012_Fig2","Peer-reviewed","vl_case",2011,36.05911,13.93788,"Al Qadarif","Rest of Sudan",3,0.996877610683441,0.951281407381506,FALSE
+38,"Mueller_et_al_2012_Fig2","Peer-reviewed","vl_case",2011,36.09312,13.87508,"Al Qadarif","Rest of Sudan",3,0.97118753194809,0.897530381133921,FALSE
+43,"Mueller_et_al_2012_Fig2","Peer-reviewed","vl_case",2011,36.12996,13.8258,"Al Qadarif","Rest of Sudan",3,0.98472011089325,0.965214729363328,FALSE
+44,"Mueller_et_al_2012_Fig2","Peer-reviewed","vl_case",2011,36.16774,13.79006,"Al Qadarif","Rest of Sudan",3,0.923078894615173,0.747978280209253,FALSE
+46,"Mueller_et_al_2012_Fig2","Peer-reviewed","vl_case",2011,36.22442,13.71663,"Al Qadarif","Rest of Sudan",3,0.924434661865234,0.892150153685099,FALSE
+47,"Mueller_et_al_2012_Fig2","Peer-reviewed","vl_case",2011,36.09406,13.74078,"Al Qadarif","Rest of Sudan",3,0.844841659069061,0.623897669005111,FALSE
+49,"Mueller_et_al_2012_Fig2","Peer-reviewed","vl_case",2011,36.26882,13.66639,"Al Qadarif","Rest of Sudan",3,0.833739876747131,0.858774441655654,FALSE
+51,"Mueller_et_al_2012_Fig2","Peer-reviewed","vl_case",2011,36.28204,13.61615,"Al Qadarif","Rest of Sudan",3,0.934540331363678,0.901300414980617,FALSE
+54,"Mueller_et_al_2012_Fig2","Peer-reviewed","vl_case",2011,36.2811,13.54755,"Al Qadarif","Rest of Sudan",3,0.89497321844101,0.801432043111066,FALSE
+56,"Mueller_et_al_2012_Fig2","Peer-reviewed","vl_case",2011,36.22064,13.52726,"Al Qadarif","Rest of Sudan",3,0.957466125488281,0.841383757250021,FALSE
+58,"Mueller_et_al_2012_Fig2","Peer-reviewed","vl_case",2011,36.17152,13.50117,"Al Qadarif","Rest of Sudan",3,0.94450855255127,0.796757527537961,FALSE
+59,"Mueller_et_al_2012_Fig2","Peer-reviewed","vl_case",2011,36.1668,13.55334,"Al Qadarif","Rest of Sudan",3,0.999541282653809,0.971463068204217,FALSE
+60,"Mueller_et_al_2012_Fig2","Peer-reviewed","vl_case",2011,36.19514,13.59199,"Al Qadarif","Rest of Sudan",3,0.932393729686737,0.718136253044547,FALSE
+62,"Mueller_et_al_2012_Fig2","Peer-reviewed","vl_case",2011,36.13657,13.64803,"Al Qadarif","Rest of Sudan",3,0.881654024124146,0.669138588888433,FALSE
+63,"Mueller_et_al_2012_Fig2","Peer-reviewed","vl_case",2011,35.93725,13.61808,"Al Qadarif","Rest of Sudan",4,0.745611011981964,0.569065345996196,FALSE
+64,"Mueller_et_al_2012_Fig2","Peer-reviewed","vl_case",2011,35.93064,13.71566,"Al Qadarif","Rest of Sudan",4,0.89502876996994,0.717727454265121,FALSE
+66,"Mueller_et_al_2012_Fig2","Peer-reviewed","vl_case",2011,35.94576,13.763,"Al Qadarif","Rest of Sudan",4,0.821583926677704,0.760932812232501,FALSE
+67,"Mueller_et_al_2012","Peer-reviewed","vl_case",2011,36.0919,13.6238,"Al Qadarif","Rest of Sudan",3,0.962677240371704,0.83219356870502,FALSE
+95,"Widaa_et_al_2012","Peer-reviewed","vector_pos",2011,32.5,13.4,"White Nile","Rest of Sudan",2,0.391892522573471,0.24998672211244,TRUE
+117,"gerstl_et_al_2006_fig1","Peer-reviewed","vl_case",2011,35.31575,12.85333,"Al Qadarif","Rest of Sudan",1,0.88688063621521,0.842430645880318,FALSE
+68,"IFRC_DREF_MDRSD031_2022","Humanitarian/news","facility_report",2022,35.2264,12.8313,"Al Qadarif","Rest of Sudan",1,0.89848393201828,0.982451547026885,FALSE
+69,"IFRC_DREF_MDRSD031_2022","Humanitarian/news","facility_report",2022,34.63850236,13.42796295,"Al Qadarif","Rest of Sudan",1,0.972017288208008,0.993526605503847,FALSE
+70,"IFRC_DREF_MDRSD031_2022","Humanitarian/news","facility_report",2022,36.08490968,13.62603662,"Al Qadarif","Rest of Sudan",3,0.9465571641922,0.963141462939693,FALSE
+71,"IFRC_DREF_MDRSD031_2022","Humanitarian/news","facility_report",2022,35.74103895,13.511581,"Al Qadarif","Rest of Sudan",4,0.979176342487335,0.98948273551433,FALSE
+72,"IFRC_DREF_MDRSD031_2022","Humanitarian/news","facility_report",2022,35.85408325,12.99704695,"Al Qadarif","Rest of Sudan",1,0.999284863471985,0.999827083579559,FALSE
+73,"IFRC_DREF_MDRSD031_2022","Humanitarian/news","facility_report",2022,33.54144831,14.14818026,"Al Jazirah","Rest of Sudan",2,0.192178428173065,0.0555873252090954,TRUE
+74,"IFRC_DREF_MDRSD031_2022","Humanitarian/news","facility_report",2022,35.42846209,13.832493,"Al Qadarif","Rest of Sudan",4,0.964459776878357,0.992150120551468,FALSE
+75,"IFRC_DREF_MDRSD031_2022","Humanitarian/news","facility_report",2022,35.36916927,14.05933487,"Al Qadarif","Rest of Sudan",2,0.914864599704742,0.969307045771892,FALSE
+87,"Hamid_et_al_2025","Peer-reviewed","facility_report",2022,24.87728825,12.05706289,"South Darfur","Darfur",4,0.188150405883789,0.295170032873021,FALSE
+77,"Adam_et_al_2014","Peer-reviewed","facility_report",2013,35.42846209,13.832493,"Al Qadarif","Rest of Sudan",4,0.964459776878357,0.917289708972132,FALSE
+83,"Mohammed_et_al_2018","Peer-reviewed","vector_pos",2013,26.2503,15.228,"North Darfur","Darfur",2,0.0215990338474512,0.00683566283090331,TRUE
+86,"radio_dabanga_pr_2013","Humanitarian/news","vl_case",2013,25.3101764,13.48865821,"North Darfur","Darfur",1,0.032928328961134,0.0501717317333512,TRUE
+118,"hassan_et_al_2020_fig1","Peer-reviewed","vector_pos",2013,36.02643,13.67571,"Al Qadarif","Rest of Sudan",3,0.795658588409424,0.852337450130014,FALSE
+119,"hassan_et_al_2020_fig2","Peer-reviewed","vector_pos",2013,34.95673,13.0371,"Al Qadarif","Rest of Sudan",1,0.773588359355927,0.452079095822666,FALSE
+120,"hassan_et_al_2020_fig3","Peer-reviewed","vector_pos",2013,32.08722,14.63362,"White Nile","Rest of Sudan",3,0.550011098384857,0.462568595331297,FALSE
+121,"hassan_et_al_2020_fig4","Peer-reviewed","vector_pos",2013,32.54,15.89459,"Khartoum","Rest of Sudan",4,0.0839627087116241,0.0754307600252085,TRUE
+80,"Jibreel_et_al_2023","Peer-reviewed","vector_pos",2015,36.1347,13.6516,"Al Qadarif","Rest of Sudan",3,0.881654024124146,0.87481961774161,FALSE
+92,"radio_dabanga_pr_2015","Humanitarian/news","vl_case",2015,25.3101764,13.48865821,"North Darfur","Darfur",1,0.032928328961134,0.0307021699462517,TRUE
+81,"Jibreel_et_al_2023","Peer-reviewed","vector_pos",2020,35.1511,12.8799,"Al Qadarif","Rest of Sudan",1,0.884826123714447,0.695141046930528,FALSE
+82,"Khogali_et_al_2024","Peer-reviewed","vector_pos",2018,35.1511,12.8799,"Al Qadarif","Rest of Sudan",1,0.884826123714447,0.750927095299632,FALSE
+84,"Mohammed_et_al_2018","Peer-reviewed","facility_report",2016,26.2503,15.228,"North Darfur","Darfur",2,0.0215990338474512,0.00343868154129601,TRUE
+88,"Mohamed_et_al_2019","Peer-reviewed","vl_case",2014,35.12329,14.05328,"Al Qadarif","Rest of Sudan",2,0.710536241531372,0.686487126724444,FALSE
+90,"Mohamed_et_al_2019","Peer-reviewed","vl_case",2014,35.00466,14.02141,"Al Qadarif","Rest of Sudan",1,0.743007779121399,0.800789558234257,FALSE
+91,"Mohamed_et_al_2019","Peer-reviewed","vl_case",2014,35.30479,13.9785,"Al Qadarif","Rest of Sudan",4,0.780600666999817,0.793575755798519,FALSE
+94,"radio_dabanga_pr_2014","Humanitarian/news","vl_case",2014,30.7903815,12.14403013,"South Kurdufan","Rest of Sudan",4,0.171636760234833,0.281539277941097,FALSE
+93,"sudan_tribune_293846_2024","Humanitarian/news","vl_case",2024,34.93114201,13.62225011,"Al Qadarif","Rest of Sudan",1,0.966645419597626,0.999564223348564,FALSE

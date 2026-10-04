@@ -83,35 +83,21 @@ tt_c  <- values(tt, mat = FALSE)[cells]
 cat("\nCandidate cells:", length(cells), "| without travel time:", sum(is.na(tt_c)), "\n")
 
 has_tt <- !is.na(tt_c)
-tt_s   <- sort(tt_c[has_tt])
-wmed   <- function(b) { w <- (1 + tt_s)^(-b); tt_s[which(cumsum(w) >= sum(w) / 2)[1]] }
 occ_tt <- terra::extract(tt, as.matrix(occ[, c("longitude", "latitude")]))[, 1]
 target <- median(occ_tt)
-b_grid <- seq(0, 3, by = 0.01)
-b      <- b_grid[which.min(abs(sapply(b_grid, wmed) - target))]
-stopifnot("Calibrated exponent at the edge of the search range" = b > 0 && b < max(b_grid))
+b      <- tt_exponent(tt_c, target)
 cat("Presence median travel time:", round(target), "min | b =", b,
-    "| weighted median at b:", round(wmed(b)), "| at b = 0.5:", round(wmed(0.5)), "\n")
+    "| weighted median at b:", round(tt_wmedian(tt_c, b)),
+    "| at b = 0.5:", round(tt_wmedian(tt_c, 0.5)), "\n")
 
-# Points drawn with replacement, given a year from the presences' year
-# distribution and year-matched values; points missing an annual value are
-# dropped and counted.
+# Pools drawn with draw_points() (helpers.R).
 year_w <- table(occ$year)
-make_pool <- function(w, seed) {
-  set.seed(seed)
-  idx <- sample(cells, N_NULL_POOL, replace = TRUE, prob = w)
-  pts <- as.data.frame(xyFromCell(cand, idx))
-  names(pts) <- c("longitude", "latitude")
-  pts$year <- as.integer(sample(names(year_w), N_NULL_POOL, replace = TRUE, prob = year_w))
-  env  <- extract_year_matched(pts, vars, require_complete = FALSE)
-  keep <- complete.cases(env)
-  list(env = env[keep, vars], fold = fold_from_blocks(pts[keep, ]),
-       tt = values(tt, mat = FALSE)[idx][keep], dropped = sum(!keep))
-}
 pools <- list(
-  uniform       = make_pool(NULL, SEED),
-  accessibility = make_pool(ifelse(has_tt, (1 + tt_c)^(-b), 0), SEED + 1)
+  uniform       = draw_points(cand, cells, N_NULL_POOL, NULL, year_w, vars, SEED),
+  accessibility = draw_points(cand, cells, N_NULL_POOL, ifelse(has_tt, (1 + tt_c)^(-b), 0),
+                              year_w, vars, SEED + 1)
 )
+for (nm in names(pools)) pools[[nm]]$tt <- values(tt, mat = FALSE)[pools[[nm]]$cell]
 
 q3 <- function(x) paste(round(quantile(x, c(0.25, 0.5, 0.75), na.rm = TRUE)), collapse = " / ")
 cat("\nTravel time q25 / median / q75 (min). Presences:", q3(occ_tt), "\n")

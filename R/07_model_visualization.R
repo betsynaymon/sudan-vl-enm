@@ -14,6 +14,8 @@
 
 source(here::here("R", "params.R"))
 source(here::here("R", "helpers.R"))
+source(here::here("R", "plotting_theme.R"))
+
 
 suppressPackageStartupMessages({
   library(terra)
@@ -59,23 +61,14 @@ map_ylim <- c(bb[["ymin"]], bb[["ymax"]]) + c(-0.5, 0.5)
 # the background, the background median is a desert cell.
 ref <- sapply(occ_env, median)
 
-# Shared label mapping for figures
-var_labels <- c(
-  slope      = "Slope (degrees)",
-  river_dist = "Distance to river (m)",
-  vertisols  = "Vertisols (0/1)",
-  lst_night  = "LST night (\u00b0C)",
-  rainfall   = "Rainfall (mm/yr)"
-)
-
 # ========================== RESPONSE CURVES =================================
 
 response_data <- response_curves(mod, ref, env_all, retained_vars) |>
-  mutate(var_label = factor(var_labels[variable], levels = var_labels))
+  mutate(cov_labels = factor(cov_labels[variable], levels = cov_labels))
 
 pres_range <- occ_env |> pivot_longer(everything(), names_to = "variable") |>
   group_by(variable) |> summarise(lo = min(value), hi = max(value)) |>
-  mutate(var_label = factor(var_labels[variable], levels = var_labels))
+  mutate(cov_labels = factor(cov_labels[variable], levels = cov_labels))
 
 p_resp <- ggplot(response_data, aes(x = value, y = suit)) +
   geom_rect(data = filter(pres_range, variable != "vertisols"),
@@ -84,7 +77,7 @@ p_resp <- ggplot(response_data, aes(x = value, y = suit)) +
   geom_line(linewidth = 0.9, colour = "#2166AC") +
   geom_point(data = filter(response_data, variable == "vertisols"),
              size = 3, colour = "#2166AC") +
-  facet_wrap(~ var_label, scales = "free_x", nrow = 2) +
+  facet_wrap(~ cov_labels, scales = "free_x", nrow = 2) +
   labs(x = NULL, y = "Habitat suitability (cloglog)",
        title = paste0("Response curves, selected MaxEnt (", sel$fc, ", rm = ", sel$rm, ")"),
        subtitle = "Others at the presence median; grey = range of presences") +
@@ -101,27 +94,7 @@ cat("Saved response_curves.png\n")
 #   rise_XX = lowest value where suitability reaches XX% of the curve's peak
 #   fall_XX = highest value where suitability is still at XX% of the peak
 
-curve_features <- function(d) {
-  mx <- max(d$suit)
-  x_at <- function(frac, side) {
-    above <- d$value[d$suit >= frac * mx]
-    if (side == "rise") min(above) else max(above)
-  }
-  tibble(
-    variable  = unique(d$variable),
-    peak_x    = d$value[which.max(d$suit)],
-    peak_suit = mx,
-    min_suit  = min(d$suit),
-    rise_10 = x_at(0.10, "rise"), rise_50 = x_at(0.50, "rise"),
-    rise_90 = x_at(0.90, "rise"),
-    fall_90 = x_at(0.90, "fall"), fall_50 = x_at(0.50, "fall"),
-    fall_10 = x_at(0.10, "fall")
-  )
-}
-
-resp_cont <- response_data |> filter(variable != "vertisols")
-resp_features <- bind_rows(lapply(split(resp_cont, resp_cont$variable),
-                                  curve_features))
+resp_features <- curve_table(response_data)
 vert <- response_data |> filter(variable == "vertisols")
 
 cat("\nResponse-curve features:\n")
@@ -144,7 +117,7 @@ p_rl <- ggplot(surf_rl, aes(rainfall, lst_night, fill = suit)) +
              colour = "grey80", size = 0.2, alpha = 0.15) +
   geom_point(data = occ_env, aes(rainfall, lst_night), inherit.aes = FALSE,
              shape = 21, fill = "white", size = 1.3) +
-  labs(x = var_labels[["rainfall"]], y = var_labels[["lst_night"]],
+  labs(x = cov_labels[["rainfall"]], y = cov_labels[["lst_night"]],
        title = "Rainfall x night temperature, selected model",
        subtitle = "Others at the presence median; white = presences, grey = background") +
   theme_minimal()
@@ -158,8 +131,8 @@ bg_spread  <- bg_env  |> mutate(type = "Background")
 env_both <- bind_rows(occ_spread, bg_spread) |>
   pivot_longer(cols = all_of(retained_vars), names_to = "variable",
                values_to = "value") |>
-  mutate(var_label = var_labels[variable],
-         var_label = factor(var_label, levels = var_labels))
+  mutate(var_label = cov_labels[variable],
+         var_label = factor(var_label, levels = cov_labels))
 
 p_spread <- ggplot(env_both |> filter(variable != "vertisols"),
                    aes(x = value, fill = type)) +
@@ -218,29 +191,13 @@ sens_r  <- rast(SENS_MASK_FILE)
 occ_wet <- terra::extract(sens_r, as.matrix(train$occ_clean[, c("longitude", "latitude")]))[, 1] %in% 1
 bg_wet  <- terra::extract(sens_r, as.matrix(train$bg_clean[,  c("longitude", "latitude")]))[, 1] %in% 1
 
-perm_importance <- function(o, b) {
-  base <- auc_ties(as.numeric(predict(mod, o, type = "cloglog")),
-                   as.numeric(predict(mod, b, type = "cloglog")))
-  t(sapply(retained_vars, function(v) {
-    drops <- replicate(N_PERM, {
-      shuf <- sample(c(o[[v]], b[[v]]))
-      o2 <- o; b2 <- b
-      o2[[v]] <- shuf[seq_len(nrow(o))]
-      b2[[v]] <- shuf[-seq_len(nrow(o))]
-      base - auc_ties(as.numeric(predict(mod, o2, type = "cloglog")),
-                      as.numeric(predict(mod, b2, type = "cloglog")))
-    })
-    c(mean = mean(drops), sd = sd(drops))
-  }))
-}
-
-set.seed(SEED); imp_all <- perm_importance(occ_env, bg_env)
-set.seed(SEED); imp_wet <- perm_importance(occ_env[occ_wet, ], bg_env[bg_wet, ])
+set.seed(SEED); imp_all <- perm_importance(mod, occ_env, bg_env, retained_vars)
+set.seed(SEED); imp_wet <- perm_importance(mod, occ_env[occ_wet, ], bg_env[bg_wet, ], retained_vars)
 
 perm_df <- bind_rows(
   data.frame(scope = "All Sudan",        variable = retained_vars, imp_all, row.names = NULL),
   data.frame(scope = "Within >= 150 mm", variable = retained_vars, imp_wet, row.names = NULL)) |>
-  mutate(var_label = var_labels[variable])
+  mutate(var_label = cov_labels[variable])
 write.csv(perm_df, file.path(DIR_TABLES, "permutation_importance.csv"), row.names = FALSE)
 
 cat("\nPermutation importance (AUC drop,", N_PERM, "permutations):\n")
@@ -248,7 +205,7 @@ perm_df |> mutate(across(c(mean, sd), ~ round(., 4))) |>
   select(scope, variable, mean, sd) |> arrange(scope, desc(mean)) |> print()
 
 p_imp <- perm_df |>
-  mutate(var_label = factor(var_label, levels = rev(var_labels))) |>
+  mutate(var_label = factor(var_label, levels = rev(cov_labels))) |>
   ggplot(aes(x = mean, y = var_label)) +
   geom_point(size = 3, colour = "#2166AC") +
   geom_errorbar(aes(xmin = mean - sd, xmax = mean + sd),
@@ -458,7 +415,7 @@ cat("Saved fig_suitability (standalone)\n")
 # ---------- Response curves + variable importance (2x3 grid) -----------------
 # Five response curves fill positions 1-5; variable importance fills the 6th
 # slot (bottom-right).
-# Objects needed: response_data, perm_df, var_labels (from earlier in script)
+# Objects needed: response_data, perm_df, cov_labels (from earlier in script)
 
 # Covariate color palette 
 pal_covariates <- c(
@@ -471,7 +428,7 @@ pal_covariates <- c(
 
 # Helper: one response curve panel
 make_response <- function(var, show_ylab = FALSE) {
-  lab <- var_labels[var]
+  lab <- cov_labels[var]
   col <- pal_covariates[lab]
   d <- response_data |> filter(variable == var)
 
@@ -500,7 +457,7 @@ p5 <- make_response("rainfall")
 # Variable importance 
 p_imp_grid <- perm_df |>
   filter(scope == "All Sudan") |>
-  mutate(var_label = factor(var_label, levels = rev(var_labels))) |>
+  mutate(var_label = factor(var_label, levels = rev(cov_labels))) |>
   ggplot(aes(x = mean, y = var_label, colour = var_label)) +
   geom_segment(aes(x = mean - sd, xend = mean + sd, yend = var_label),
                linewidth = 0.5, show.legend = FALSE) +

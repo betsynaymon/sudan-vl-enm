@@ -244,18 +244,15 @@ print(signif(sort(final_mod$betas), 3))
 # ------------------- Held-out presence predictions --------------------------
 # Selected configuration: each presence's prediction from the model trained
 # without its fold, and whether it falls below that model's OMISSION_Q
-# threshold. Shows which records the model fails to transfer to.
+# threshold (heldout_preds, helpers.R). Shows which records the model fails
+# to transfer to. Rows ordered by fold.
 
-held_out <- lapply(seq_len(K_FOLDS), function(k) {
-  m_k <- fit_maxnet(pa[grp_all != k], env_all[grp_all != k, ], best$fc, best$rm)
-  thr <- quantile(as.numeric(predict(m_k, env_all[grp_all != k & pa == 1, ],
-                                     type = "cloglog")), OMISSION_Q)
-  d <- occ[occ$fold == k, c("coordinate_id", "source", "year",
-                            "longitude", "latitude", "fold")]
-  d$pred <- as.numeric(predict(m_k, occ_env[occ$fold == k, ], type = "cloglog"))
-  d$below_threshold <- d$pred < thr
-  d
-}) |> bind_rows()
+ho <- heldout_preds(pa, env_all, grp_all,
+                    function(p, d) fit_maxnet(p, d, best$fc, best$rm), maxnet_prob)
+stopifnot("Held-out folds differ from the presences'" = all(ho$fold == occ$fold))
+held_out <- cbind(occ[, c("coordinate_id", "source", "year", "longitude", "latitude", "fold")],
+                  ho[, c("pred", "below_threshold")])
+held_out <- held_out[order(held_out$fold), ]
 
 write.csv(held_out, file.path(DIR_TABLES, "heldout_presence_predictions.csv"),
           row.names = FALSE)

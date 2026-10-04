@@ -21,6 +21,7 @@ for (d in c(DIR_POP, DIR_PROCESSED, DIR_OUTPUTS, DIR_FIGS, DIR_TABLES,
             DIR_MODELS, DIR_SURFACES, DIR_SENS))
   dir.create(d, showWarnings = FALSE, recursive = TRUE)
 
+
 # ----- Files -----
 OCC_RAW_FILE <- file.path(DIR_RAW, "compiled_vl_presences.csv")
 OCC_FILE     <- file.path(DIR_PROCESSED, "occurrences_thinned.csv")   # written by 02
@@ -37,6 +38,11 @@ POP_URL <- paste0("https://data.worldpop.org/GIS/Population/Global_2015_2030/",
 POP_ALIGNED_FILE <- file.path(DIR_SURFACES, "worldpop_2025_aligned.tif")
 CANDIDATES_FILE  <- file.path(DIR_SURFACES, "plateau_candidate_surfaces.tif")
 POP_TOL <- 0.001   # max relative change allowed when aligning or summing population
+BIAS_SURFACES_FILE <- file.path(DIR_SURFACES, "bias_correction_surfaces.tif")  # 12; read by 20
+VARIANT_SURFACES_FILE <- file.path(DIR_SURFACES, "variant_surfaces.tif")  # 15; read by 20
+STATE_STATUS_FILE <- file.path(DIR_RAW, "state_endemic_status.csv")  # literature endemic status by state (16)
+DQ_SURFACES_FILE     <- file.path(DIR_SURFACES, "data_quality_refit_surfaces.tif")     # 10; read by 20
+TT_COV_SURFACES_FILE <- file.path(DIR_SURFACES, "accessibility_covariate_surfaces.tif") # 24; read by 20
 
 # ----- Covariate filename lookup -----
 # All candidates screened in 03 (static layers and 2000-2024 long-term means).
@@ -56,10 +62,25 @@ COV_FILES <- c(
 
 # Dynamic covariates: one raster per year with occurrence records, matched to
 # each record's year (exported in python/02_covariates.ipynb). COV_FILES holds
-# their long-term means (2000-2024).
+# their long-term means (2000-2024). Elevation, slope, river distance and
+# vertisols are static.
 COV_ANNUAL <- c(
+  lst_day   = "lst_day_annual_{year}_1km.tif",
   lst_night = "lst_night_annual_{year}_1km.tif",
-  rainfall  = "rainfall_{year}_1km.tif"
+  ndvi      = "ndvi_annual_{year}_1km.tif",
+  rainfall  = "rainfall_{year}_1km.tif",
+  treecover = "treecover_{year}_1km.tif"
+)
+
+# Seasonal LST-night composites, tested in 15 only. Kept out of COV_FILES so
+# 01's checks and 03's screening are unchanged.
+SEASONAL_FILES <- c(
+  lst_night_dry = "lst_night_dry_mean_2000_2024_1km.tif",
+  lst_night_wet = "lst_night_wet_mean_2000_2024_1km.tif"
+)
+SEASONAL_ANNUAL <- c(
+  lst_night_dry = "lst_night_dry_{year}_1km.tif",
+  lst_night_wet = "lst_night_wet_{year}_1km.tif"
 )
 
 # ----- Study domain -----
@@ -193,17 +214,41 @@ N_PERM     <- 50     # permutation-importance repeats (07)
 # ----- Accessibility -----
 TT_REMOTE_MIN <- 300   # remoteness threshold, minutes to nearest city (22)
 
-# ----- Comparators -----
-RF_NTREES     <- 1000                    # 09; mtry grid derived from retained vars
-GBT_LR        <- c(0.001, 0.005, 0.01)   # 17
-GBT_DEPTH     <- c(1, 3, 5)
-GBT_NTREES    <- 5000
-GBT_TREE_STEP <- 500
-GBT_BAG_FRAC  <- 0.75
-GBT_MIN_OBS   <- 10
+# ----- Comparators (09, 17) -----
+# Random forest (09): a down-sampled probability forest (fit_rf, helpers.R).
+# Every tree draws, with replacement, as many presences and as many background
+# points as there are presences (Valavi et al. 2021, Ecography: down-sampling
+# improved random forests on presence-background data; class weighting did
+# not). mtry is tuned over 1 to the number of retained covariates.
+RF_NTREES       <- 1000
+RF_MODEL_FILE   <- file.path(DIR_MODELS,   "rf_final.rds")            # read by 17
+RF_SUIT_FILE    <- file.path(DIR_SURFACES, "rf_suitability.tif")      # read by 17
+COMPARATOR_FILE <- file.path(DIR_TABLES,   "comparator_summary.csv")  # MaxEnt and RF (09); read by 17
 
+# Gradient boosted trees (17; fit_gbt, helpers.R): presences weight 1 and the
+# background down-weighted to the same total weight, as for boosted
+# regression trees in Valavi et al. 2022.
+# Tuned by spatial CV over learning rate x depth x number of trees; the grid
+# includes their settings (learning rate 0.001, depth 1 or 5, bag fraction
+# 0.75) and the dissertation's, with the number of trees extended beyond the
+# dissertation's 5,000. 17 stops if the selection sits at the maximum.
+# Thresholds come from cross-fitted predictions, the boosting counterpart of
+# the forest's out-of-bag predictions.
+GBT_LR           <- c(0.001, 0.005, 0.01)  # shrinkage
+GBT_DEPTH        <- c(1, 3, 5)             # gbm interaction.depth: splits per tree
+GBT_TREE_STEP    <- 500
+GBT_NTREES_MAX   <- 10000
+GBT_BAG          <- 0.75                   # share of rows drawn for each tree
+GBT_MIN_NODE     <- 10                     # minimum rows per leaf
+GBT_THR_FOLDS    <- 10                     # random folds for cross-fitted thresholds
+GBT_MODEL_FILE   <- file.path(DIR_MODELS,   "gbt_final.rds")
+GBT_SUIT_FILE    <- file.path(DIR_SURFACES, "gbt_suitability.tif")
+THREE_MODEL_FILE <- file.path(DIR_TABLES,   "three_model_comparison.csv")  # one row per algorithm (17)
 
 # ----- Null model test (13) -----
 N_NULL      <- 99      # iterations per null; smallest attainable p = 1 / (N_NULL + 1)
 N_NULL_POOL <- 50000   # candidate null presences per pool
 NULL_ALPHA  <- 0.05    # the accessibility null is beaten if p <= NULL_ALPHA
+
+# ----- Accessibility covariate test (24) -----
+N_TT_GRID <- 20   # presence travel-time quantiles averaged over to integrate accessibility out
