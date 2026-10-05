@@ -412,9 +412,7 @@ display  <- st_as_sf(vect(DISPLAY_ADM0_FILE))
 excluded <- st_as_sf(vect(EXCLUDED_FILE))
 sudan    <- st_as_sf(vect(ADM0_FILE))
 states   <- st_as_sf(vect(ADM1_FILE))
-bb       <- st_bbox(display)
-map_xlim <- c(bb[["xmin"]], bb[["xmax"]]) + c(-0.5, 0.5)
-map_ylim <- c(bb[["ymin"]], bb[["ymax"]]) + c(-0.5, 0.5)
+lim      <- display_limits(display)
 
 map_panel <- function(r, title) {
   d <- as.data.frame(r, xy = TRUE, na.rm = TRUE)
@@ -426,7 +424,7 @@ map_panel <- function(r, title) {
     scale_fill_suitability(guide = guide_colourbar(title.position = "top", title.hjust = 0.5)) +
     layer_admin1(states) +
     layer_country(display) +
-    coord_sf(xlim = map_xlim, ylim = map_ylim, crs = 4326, expand = FALSE) +
+    coord_display(lim) +
     labs(title = title) +
     theme_map() +
     theme(plot.title = element_text(size = 9, hjust = 0))
@@ -440,8 +438,8 @@ p_maps <- (panels[[1]] + panels[[2]] + panels[[3]] + add_scalebar(location="tl")
   theme(legend.position = "bottom", legend.key.width = unit(1.5, "cm"),
         legend.key.height = unit(0.25, "cm"), legend.title = element_text(size = 8),
         legend.text = element_text(size = 7))
-panel_h <- (FIG_WIDTH_FULL / 3) * diff(map_ylim) /
-  (diff(map_xlim) * cos(mean(map_ylim) * pi / 180))
+panel_h <- (FIG_WIDTH_FULL / 3) * diff(lim$y) /
+  (diff(lim$x) * cos(mean(lim$y) * pi / 180))
 for (ext in c("png", "pdf"))
   save_fig(file.path(DIR_FIGS, paste0("suitability_three_models.", ext)), p_maps,
            width = FIG_WIDTH_FULL, height = panel_h + 2.5)

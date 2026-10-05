@@ -52,10 +52,8 @@ covs_dom <- domain_covs(retained_vars)
 sudan  <- st_as_sf(vect(ADM0_FILE))
 states <- st_as_sf(vect(ADM1_FILE))
 
-# Map extent from the study area, with a margin
-bb <- st_bbox(display)
-map_xlim <- c(bb[["xmin"]], bb[["xmax"]]) + c(-0.5, 0.5)
-map_ylim <- c(bb[["ymin"]], bb[["ymax"]]) + c(-0.5, 0.5)
+# Map extent from the display outline, with a margin (plotting_theme.R)
+lim <- display_limits(display)
 
 # Reference for curves and surfaces: the presence median. With the desert in
 # the background, the background median is a desert cell.
@@ -340,7 +338,7 @@ p_suit_a <- ggplot() +
     line_width = 0.3, pad_x = unit(0.2, "cm"), pad_y = unit(0.2, "cm")
   ) +
   labs(title = "(a) Predicted suitability") +
-  coord_sf(xlim = map_xlim, ylim = map_ylim, crs = 4326, expand = FALSE) +
+  coord_display(lim) +
   theme_map() +
   theme(
     legend.position = "bottom",
@@ -367,7 +365,7 @@ p_mess_b <- ggplot() +
   geom_sf(data = occ_sf, shape = 21, size = 1.0, stroke = 0.3,
           fill = "white", colour = "black") +
   labs(title = "(b) Outside the presence range") +
-  coord_sf(xlim = map_xlim, ylim = map_ylim, crs = 4326, expand = FALSE) +
+  coord_display(lim) +
   theme_map() +
   theme(
     legend.position = "bottom",
@@ -403,7 +401,7 @@ p_suit_full <- ggplot() +
           fill = "white", colour = "black") +
   add_scalebar() +
   add_north_arrow() +
-  coord_sf(xlim = map_xlim, ylim = map_ylim, crs = 4326, expand = FALSE) +
+  coord_display(lim) +
   theme_map()
  
 save_fig(file.path(DIR_FIGS, "fig_suitability.png"), p_suit_full,

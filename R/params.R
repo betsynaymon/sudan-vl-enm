@@ -103,6 +103,7 @@ EXCLUDE_NORTH_OF  <- 22
 ADM0_FILE         <- file.path(DIR_PROCESSED, "study_adm0.gpkg")    # modelled domain
 ADM1_FILE         <- file.path(DIR_PROCESSED, "study_adm1.gpkg")
 DISPLAY_ADM0_FILE <- file.path(DIR_PROCESSED, "display_adm0.gpkg")  # full GADM outline (maps)
+DISPLAY_ADM1_FILE <- file.path(DIR_PROCESSED, "display_adm1.gpkg")  # full GADM states (maps that aren't model output)
 EXCLUDED_FILE     <- file.path(DIR_PROCESSED, "excluded_area.gpkg") # Halaib Triangle (maps)
 
 

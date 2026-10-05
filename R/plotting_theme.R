@@ -24,16 +24,11 @@ save_fig <- function(filename, plot = last_plot(),
                      dpi = FIG_DPI,
                      bg = "white",
                      ...) {
-  ggsave(
-    filename = filename,
-    plot     = plot,
-    width    = width,
-    height   = height,
-    units    = "cm",
-    dpi      = dpi,
-    bg       = bg,
-    ...
-  )
+  # PDFs through Cairo: R's pdf() device mis-clipped ggpattern's hatching on
+  # multi-part polygons (fig_endemic_status, Red Sea); Cairo matches the PNGs.
+  dev <- if (grepl("\\.pdf$", filename, ignore.case = TRUE)) grDevices::cairo_pdf else NULL
+  ggsave(filename = filename, plot = plot, width = width, height = height,
+         units = "cm", dpi = dpi, bg = bg, device = dev, ...)
 }
 
 
@@ -97,12 +92,40 @@ pal_models <- c(
 )
 model_labels <- c(maxent = "MaxEnt", rf = "Random forest", gbt = "Boosted trees")
 
-# — Occurrence types (for study area map) —
+# — Occurrence records by evidence type (fig_study_area), keyed by presence_type —
 pal_occurrences <- c(
-    "Human VL Case"      = "#332288",   # indigo
-    "Facility Report"   = "#44AA99",   # teal
-    "Vector"        = "#CC6677"   # rose
+    vl_case         = "#332288",   # indigo
+    facility_report = "#44AA99",   # teal
+    vector_pos      = "#CC6677"    # rose
 )
+occ_type_labels <- c(vl_case = "Human VL case", facility_report = "Facility report",
+                     vector_pos = "Vector-positive site")
+
+# — Endemic status by state (fig_study_area), keyed by STATE_STATUS_FILE's status —
+# Both non-core classes are white so grey means only "not modelled"; hatching
+# marks "Reported".
+endemic_labels   <- c("Core endemic"  = "Core endemic",
+                      "Reported"      = "Reported cases or foci",
+                      "No documented" = "No documented cases or foci")
+pal_endemic      <- c("Core endemic" = "#4393C3", "Reported" = "white", "No documented" = "white")
+endemic_patterns <- c("Core endemic" = "none", "Reported" = "stripe", "No documented" = "none")
+HATCH_COL       <- "#4393C3"   # stripes for "Reported"
+HATCH_ANGLE     <- 45
+HATCH_SPACING   <- 0.005       # npc units: smaller = denser
+HATCH_DENSITY   <- 0.28        # share of area covered by stripes
+HATCH_SIZE      <- 0.01        # stripe line width
+HATCH_KEY_SCALE <- 0.7         # pattern scale in the legend key
+
+# — State names on maps where they differ from GADM's NAME_1 —
+state_labels <- c("Al Qadarif" = "Gedaref", "Al Jazirah" = "Gezira",
+                  "North Kurdufan" = "North Kordofan", "South Kurdufan" = "South Kordofan",
+                  "West Kurdufan" = "West Kordofan")
+
+# — Locator inset —
+col_locator <- "#B2182B"
+INSET_XLIM  <- c(-18, 55)
+INSET_YLIM  <- c(-5, 38)
+INSET_BOX   <- c(left = 0.02, bottom = 0.70, right = 0.26, top = 0.98)   # share of the figure
 
 # — Accessibility comparison (11) —
 pal_access <- c(
@@ -249,7 +272,7 @@ theme_map <- function(base_size = BASE_SIZE,
 #    Wrappers around ggspatial to not repeat style args.
 #    Require: library(ggspatial)
 # ----------------------------------------------------------------------------
-
+INSET_BOX   <- c(left = 0.01, bottom = 0.86, right = 0.19, top = 0.99)   # share of the map panel
 # Scale bar — bottom-left by default
 add_scalebar <- function(location = "bl", width_hint = 0.2, ...) {
   ggspatial::annotation_scale(
@@ -305,6 +328,16 @@ layer_occurrences <- function(data, mapping = aes(), size = 1.8,
 layer_excluded <- function(data) {
   ggplot2::geom_sf(data = data, fill = "grey80", colour = NA)
 }
+
+# Map extent: the full display outline plus a margin in degrees (07, 12, 17,
+# fig_study_area and the remaining map scripts).
+MAP_MARGIN_DEG <- 0.5
+display_limits <- function(display, margin = MAP_MARGIN_DEG) {
+  bb <- sf::st_bbox(display)
+  list(x = c(bb[["xmin"]], bb[["xmax"]]) + c(-margin, margin),
+       y = c(bb[["ymin"]], bb[["ymax"]]) + c(-margin, margin))
+}
+coord_display <- function(lim) coord_sf(xlim = lim$x, ylim = lim$y, crs = 4326, expand = FALSE)
 # ----------------------------------------------------------------------------
 # 8. SET DEFAULTS
 #    Automatically applied when this file is sourced.

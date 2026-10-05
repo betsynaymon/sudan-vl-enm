@@ -199,10 +199,9 @@ save_fig(file.path(DIR_FIGS, "response_curves_bias_comparison.png"), p_curves,
          width = FIG_WIDTH_FULL, height = FIG_HEIGHT_PLOT)
 
 display  <- st_as_sf(vect(DISPLAY_ADM0_FILE))
+excluded <- st_as_sf(vect(EXCLUDED_FILE))
 states   <- st_as_sf(vect(ADM1_FILE))
-bb       <- st_bbox(display)
-map_xlim <- c(bb[["xmin"]], bb[["xmax"]]) + c(-0.5, 0.5)
-map_ylim <- c(bb[["ymin"]], bb[["ymax"]]) + c(-0.5, 0.5)
+lim      <- display_limits(display)
 
 map_panel <- function(nm, title) {
   df <- as.data.frame(surf_all[[nm]], xy = TRUE, na.rm = TRUE)
@@ -210,10 +209,11 @@ map_panel <- function(nm, title) {
   ggplot() +
     geom_raster(data = df, aes(x, y, fill = suitability)) +
     scale_fill_suitability() +
+    layer_excluded(excluded) +
     layer_admin1(data = states, colour = "black", linewidth = 0.15) +
     layer_country(data = display, colour = "black", linewidth = 0.3) +
     labs(title = title) +
-    coord_sf(xlim = map_xlim, ylim = map_ylim, crs = 4326, expand = FALSE) +
+    coord_display(lim) +
     theme_map() +
     theme(plot.title = element_text(size = 9, hjust = 0))
 }
