@@ -127,14 +127,16 @@ domain_covs <- function(vars, files = COV_FILES) {
   names(r) <- vars
   terra::mask(r, terra::rast(DOMAIN_FILE), maskvalues = 0)
 }
+
 # Spatial CV for any algorithm, as in 06: each fold's model is fitted on the
 # other folds and scored on its own. fit(pa, env) returns a model and
 # pred(model, env) its suitability; `fold` is each row's own fold. With
 # `within` (one logical per row), metrics are also computed on the test rows
 # inside it (suffix _wet); the omission threshold still uses all training
-# presences, as in 06. A failed fit stops rather than being skipped.
-cv_fit <- function(pa, env, fold, fit, pred, within = NULL) {
-  do.call(rbind, lapply(seq_len(K_FOLDS), function(k) {
+# presences, as in 06. keep_models = TRUE attaches the fold models as
+# attr(, "models") (14). A failed fit stops rather than being skipped.
+cv_fit <- function(pa, env, fold, fit, pred, within = NULL, keep_models = FALSE) {
+  res <- lapply(seq_len(K_FOLDS), function(k) {
     tr   <- fold != k
     m    <- fit(pa[tr], env[tr, ])
     p_tr <- pred(m, env[tr & pa == 1, ])
@@ -147,13 +149,16 @@ cv_fit <- function(pa, env, fold, fit, pred, within = NULL) {
       names(w) <- paste0(names(w), "_wet")
       out <- cbind(out, w)
     }
-    out
-  }))
+    list(out = out, model = if (keep_models) m)
+  })
+  cv <- do.call(rbind, lapply(res, `[[`, "out"))
+  if (keep_models) attr(cv, "models") <- lapply(res, `[[`, "model")
+  cv
 }
 
 # Spatial CV for one MaxEnt configuration.
-cv_maxnet <- function(pa, env, fold, fc, rm, within = NULL)
-  cv_fit(pa, env, fold, function(p, d) fit_maxnet(p, d, fc, rm), maxnet_prob, within)
+cv_maxnet <- function(pa, env, fold, fc, rm, within = NULL, keep_models = FALSE)
+  cv_fit(pa, env, fold, function(p, d) fit_maxnet(p, d, fc, rm), maxnet_prob, within, keep_models)
 
 # Fit, cross-validate and threshold one configuration on a presence and
 # background set: the refit used by 10, 12 and 15.
@@ -367,3 +372,24 @@ fit_gbt <- function(pa, env, lr, depth, n_trees) {
 # also the `fun` for terra::predict.
 gbt_prob <- function(mod, data, ...)
   predict(mod, newdata = data, n.trees = mod$n.trees, type = "response")
+
+
+# Risk-weighted population by state for a surface on its own scale and on a
+# reference surface's scale: each cell takes the reference value at the same
+# rank among the cells both cover (quantile mapping). A difference that
+# survives on the reference scale is a change in where risk is ranked
+# (geography); one that vanishes is output scale (14; the common-scale step
+# after 21).
+rw_by_scale <- function(alt_r, ref_r, pop_r, zones_r) {
+  x  <- terra::values(alt_r, mat = FALSE)
+  r  <- terra::values(ref_r, mat = FALSE)
+  p  <- terra::values(pop_r, mat = FALSE)
+  lv <- terra::levels(zones_r)[[1]]
+  st <- lv[[2]][match(terra::values(zones_r, mat = FALSE), lv[[1]])]
+  cc <- !is.na(x) & !is.na(r) & !is.na(p)
+  if (anyNA(st[cc])) stop("A cell has no state")
+  common <- sort(r[cc])[rank(x[cc], ties.method = "first")]
+  d <- data.frame(state = st[cc], ref = p[cc] * r[cc], own = p[cc] * x[cc],
+                  common = p[cc] * common)
+  stats::aggregate(cbind(ref, own, common) ~ state, data = d, FUN = sum)
+}

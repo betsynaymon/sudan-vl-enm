@@ -125,7 +125,7 @@ state_labels <- c("Al Qadarif" = "Gedaref", "Al Jazirah" = "Gezira",
 col_locator <- "#B2182B"
 INSET_XLIM  <- c(-18, 55)
 INSET_YLIM  <- c(-5, 38)
-INSET_BOX   <- c(left = 0.02, bottom = 0.70, right = 0.26, top = 0.98)   # share of the figure
+INSET_BOX   <- c(left = 0.01, bottom = 0.86, right = 0.19, top = 0.99)   # share of the map panel
 
 # — Accessibility comparison (11) —
 pal_access <- c(
@@ -179,6 +179,16 @@ pal_tt <- c(primary = "#969696", augmented = "#4575B4")
 
 # — Darfur vs the rest (20) —
 pal_region <- c("Rest of Sudan" = "#B2182B", "Darfur" = "#2166AC")
+
+# — Spread across fold-excluded models (14): sequential, 0 = no spread —
+pal_spread <- c("#FFF5F0", "#FCBBA1", "#FB6A4A", "#CB181D", "#67000D")
+scale_fill_spread <- function(name = "SD across\nfold-excluded\nmodels", ...)
+  scale_fill_gradientn(colours = pal_spread, limits = c(0, NA), name = name, ...)
+
+# — Single-year projections (18) —
+pal_drift    <- c("before drift" = "grey30", "drift" = "#B2182B")
+drift_labels <- c("before drift" = "Before Terra's drift",
+                  "drift"        = paste0("Terra drifting (", TERRA_DRIFT_FROM, " on)"))
 
 # ----------------------------------------------------------------------------
 # 4. BASE THEME (non-map figures)
@@ -272,7 +282,6 @@ theme_map <- function(base_size = BASE_SIZE,
 #    Wrappers around ggspatial to not repeat style args.
 #    Require: library(ggspatial)
 # ----------------------------------------------------------------------------
-INSET_BOX   <- c(left = 0.01, bottom = 0.86, right = 0.19, top = 0.99)   # share of the map panel
 # Scale bar — bottom-left by default
 add_scalebar <- function(location = "bl", width_hint = 0.2, ...) {
   ggspatial::annotation_scale(

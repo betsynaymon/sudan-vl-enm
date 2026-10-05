@@ -246,6 +246,10 @@ GBT_MODEL_FILE   <- file.path(DIR_MODELS,   "gbt_final.rds")
 GBT_SUIT_FILE    <- file.path(DIR_SURFACES, "gbt_suitability.tif")
 THREE_MODEL_FILE <- file.path(DIR_TABLES,   "three_model_comparison.csv")  # one row per algorithm (17)
 
+# ----- Fold-excluded refits (14) -----
+FOLD_SURFACES_FILE <- file.path(DIR_SURFACES, "fold_excluded_surfaces.tif")  # layers without_fold_k
+FOLD_SD_FILE       <- file.path(DIR_SURFACES, "fold_excluded_sd.tif")        # SD across those layers
+
 # ----- Null model test (13) -----
 N_NULL      <- 99      # iterations per null; smallest attainable p = 1 / (N_NULL + 1)
 N_NULL_POOL <- 50000   # candidate null presences per pool
@@ -253,3 +257,16 @@ NULL_ALPHA  <- 0.05    # the accessibility null is beaten if p <= NULL_ALPHA
 
 # ----- Accessibility covariate test (24) -----
 N_TT_GRID <- 20   # presence travel-time quantiles averaged over to integrate accessibility out
+
+# ----- Single-year projections (18) -----
+# The model is fitted on year-matched annual values and predicted on the
+# 2000-2024 long-term means; 18 also predicts it onto each single year's
+# rasters: every occurrence year (python/02_covariates.ipynb) and PROJ_YEAR
+# (python/04_2025_rasters.ipynb, which exported only these layers).
+PROJ_YEAR   <- 2025
+PROJ_ANNUAL <- COV_ANNUAL[c("lst_night", "rainfall")]
+# MODIS Terra (MOD11A2, night LST) drifts to an earlier overpass: beyond
+# 10:30 +/- 1 min from April 2021, about 9:00 by December 2025 (NASA Terra
+# mission pages). An earlier night pass reads warmer, so night LST from these
+# years is not comparable with earlier years.
+TERRA_DRIFT_FROM <- 2021

@@ -1,329 +1,231 @@
 # ============================================================================
 # 14_uncertainty_surface.R
-# Refits MaxEnt on each spatial CV fold's training set, predicts each to the
-# full raster, and computes pixelwise mean and SD across the 4 surfaces.
-# Also computes fold-excluded ARP under all three estimation methods to
-# test sensitivity to subsampling.
+# How much do the surface and the estimate depend on which block of presences
+# the model sees? Takes 06's fold models (the selected configuration fitted
+# without each spatial CV fold), predicts each over the domain, and reports
+# the spread across the four surfaces and estimates, nationally and by state.
+# This is sensitivity to leaving out one geographic block (and a quarter of
+# the presences), not a confidence interval: there are four models, and an
+# SD on a 0-1 scale is near zero wherever suitability is near 0 or 1.
 #
-# Inputs:  outputs/models/training_data.rds
-#          outputs/models/spatial_cv_folds.rds
-#          outputs/models/selected_tuning.rds
-#          outputs/models/retained_vars.rds
-#          outputs/surfaces/worldpop_2025_aligned.tif
-#          outputs/tables/arp_summary.csv
-#          data/raw/ (covariate rasters)
-#          data/processed/occurrences_thinned.csv
-# Outputs: outputs/surfaces/maxent_cv_mean.tif
-#          outputs/surfaces/maxent_cv_sd.tif
-#          outputs/models/cv_fold_predictions.rds  (cached)
-#          outputs/tables/arp_fold_uncertainty.csv
-#          outputs/tables/arp_fold_uncertainty_masked.csv
-#          outputs/figures/prediction_uncertainty_sd.png
-#          outputs/figures/fig_prediction_uncertainty_sd.png
+# Inputs:  TRAIN_FILE, TUNING_FILE, MODEL_FILE, SUIT_FILE, POP_ALIGNED_FILE,
+#          SENS_MASK_FILE, DOMAIN_FILE, ADM1_FILE, DISPLAY_ADM0_FILE,
+#          EXCLUDED_FILE, retained_vars.rds, COV_FILES,
+#          tuning_by_fold.csv (06), arp_summary.csv and
+#          arp_plateau_candidates.csv (08)
+# Outputs: FOLD_SURFACES_FILE, FOLD_SD_FILE
+#          outputs/tables/arp_fold_excluded.csv, fold_excluded_by_state.csv
+#          outputs/figures/fig_fold_sd.png / .pdf
+# Runtime: about 3-6 min (four fits, four domain predictions).
 # ============================================================================
 
 source(here::here("R", "params.R"))
+source(here::here("R", "helpers.R"))
 source(here::here("R", "plotting_theme.R"))
 
-
 suppressPackageStartupMessages({
-  library(terra)
-  library(sf)
-  library(dplyr)
-  library(maxnet)
-  library(ggplot2)
-  library(geodata)
-  library(ggspatial)
+  library(terra); library(sf); library(dplyr); library(ggplot2); library(maxnet)
 })
 
 # ------------------------------ Load inputs ---------------------------------
 
-train   <- readRDS(file.path(DIR_MODELS, "training_data.rds"))
-folds   <- readRDS(file.path(DIR_MODELS, "spatial_cv_folds.rds"))
+train   <- readRDS(TRAIN_FILE)
+tuning  <- readRDS(TUNING_FILE)
+mod     <- readRDS(MODEL_FILE)
 vars    <- readRDS(file.path(DIR_MODELS, "retained_vars.rds"))
-tuning  <- readRDS(file.path(DIR_MODELS, "selected_tuning.rds"))
+suit_r  <- rast(SUIT_FILE)
+pop     <- rast(POP_ALIGNED_FILE)
+belt_r  <- rast(SENS_MASK_FILE)
+fold_06 <- read.csv(file.path(DIR_TABLES, "tuning_by_fold.csv"))
+arp_08  <- read.csv(file.path(DIR_TABLES, "arp_summary.csv"))
+cand_08 <- read.csv(file.path(DIR_TABLES, "arp_plateau_candidates.csv"))
 
-cov_stack <- rast(file.path(DIR_COVARIATES, COV_FILES))
-names(cov_stack) <- names(COV_FILES)
+occ     <- train$occ_clean
+bg      <- train$bg_clean
+occ_env <- train$occ_env[, vars]
+bg_env  <- train$bg_env[, vars]
 
-cat("Presences:", nrow(train$occ_env), "| Background:", nrow(train$bg_env), "\n")
-cat("Refitting with:", tuning$fc, "rm =", tuning$rm, "\n")
-
-# ---------------------- Fold alignment --------------------------------------
-
-df <- bind_rows(
-  bind_cols(train$occ_env, train$occ_clean[, c("longitude", "latitude")]) |>
-    mutate(pa = 1),
-  bind_cols(train$bg_env, train$bg_clean[, c("longitude", "latitude")]) |>
-    mutate(pa = 0)
-)
-
-occ_orig   <- read.csv(here::here("data", "processed", "occurrences_thinned.csv"))
-occ_keys   <- paste(round(occ_orig$longitude, 5), round(occ_orig$latitude, 5), occ_orig$year)
-train_keys <- paste(round(train$occ_clean$longitude, 5), round(train$occ_clean$latitude, 5), train$occ_clean$year)
-dedup_idx  <- which(!occ_keys %in% train_keys)
-
-fold_ids <- folds$folds_ids[-(dedup_idx)]
-
+# Each row carries its fold and >= 150 mm flag from 06.
+pa   <- c(rep(1, nrow(occ_env)), rep(0, nrow(bg_env)))
+env  <- rbind(occ_env, bg_env)
+fold <- c(occ$fold, bg$fold)
+wet  <- c(occ$wet, bg$wet)
 stopifnot(
-  "Fold vector length doesn't match training data" =
-    length(fold_ids) == nrow(df)
+  "Presence rows and values differ"            = nrow(occ) == nrow(occ_env),
+  "Background rows and values differ"          = nrow(bg)  == nrow(bg_env),
+  "A training value is missing"                = !anyNA(env),
+  "A row has no valid fold"                    = all(fold %in% seq_len(K_FOLDS)),
+  "A row has no >= 150 mm flag"                = is.logical(wet) && !anyNA(wet),
+  "River distance is not a retained covariate" = "river_dist" %in% vars,
+  "Population grid differs from the surface"   = compareGeom(pop,    suit_r, stopOnError = FALSE),
+  "Belt mask grid differs from the surface"    = compareGeom(belt_r, suit_r, stopOnError = FALSE)
+)
+zones     <- state_zones(suit_r)
+occ$state <- as.character(terra::extract(zones, as.matrix(occ[, c("longitude", "latitude")]))[, 1])
+stopifnot("A presence has no state" = !anyNA(occ$state))
+cat("Presences:", sum(pa == 1), "| background:", sum(pa == 0),
+    "| test presences per fold:", table(fold[pa == 1]), "\n")
+cat("\nPresences by state and fold (each fold-excluded model drops one column):\n")
+print(table(occ$state, fold = occ$fold))
+
+# --------------- Fold models reproduce 06; full model reproduces 08 ----------
+
+cat("\nFold models,", tuning$fc, "rm", tuning$rm, "...\n")
+cv        <- cv_maxnet(pa, env, fold, tuning$fc, tuning$rm, within = wet, keep_models = TRUE)
+fold_mods <- attr(cv, "models")
+thr_full  <- thresholds_from(maxnet_prob(mod, occ_env), maxnet_prob(mod, bg_env))
+arp_full  <- arp_estimates(suit_r, pop, thr_full)
+rw_full   <- arp_full[["risk_weighted"]]
+
+m_cols  <- c("auc", "cbi", "or_10p", "auc_wet", "cbi_wet", "or_10p_wet")
+f06     <- fold_06 |> filter(fc == tuning$fc, rm == tuning$rm) |> arrange(fold)
+thr_08  <- setNames(arp_08$threshold, arp_08$metric)
+arp_08v <- setNames(arp_08$arp,       arp_08$metric)
+stopifnot(
+  "Fold-model CV metrics differ from tuning_by_fold.csv (06)" =
+    nrow(f06) == K_FOLDS && length(fold_mods) == K_FOLDS &&
+    isTRUE(all.equal(as.matrix(cv[, m_cols]), as.matrix(f06[, m_cols]),
+                     check.attributes = FALSE)),
+  "Thresholds differ from arp_summary.csv (08)" = all(abs(thr_full - thr_08[names(thr_full)]) < 1e-6),
+  "Estimates differ from arp_summary.csv (08)"  = all(round(arp_full) == arp_08v[names(arp_full)])
+)
+cat("Fold models reproduce 06 (CV by fold); the full model reproduces 08 (thresholds, estimates)\n")
+cat("Features per fold model:", sapply(fold_mods, function(m) length(m$betas)),
+    "| full model:", length(mod$betas), "\n")
+
+# ------------------------ Fold-excluded surfaces ------------------------------
+
+covs   <- domain_covs(vars)
+fold_r <- rast(lapply(seq_len(K_FOLDS), function(k) {
+  cat("  predicting without fold", k, "\n")
+  terra::predict(covs, fold_mods[[k]], type = "cloglog", na.rm = TRUE)
+}))
+names(fold_r) <- paste0("without_fold_", seq_len(K_FOLDS))
+writeRaster(fold_r, FOLD_SURFACES_FILE, overwrite = TRUE)
+fold_r <- rast(FOLD_SURFACES_FILE)   # saved (FLT4S) values
+stopifnot("A fold surface covers different cells from SUIT_FILE" =
+  all(sapply(seq_len(K_FOLDS), function(k)
+    global(is.na(fold_r[[k]]) != is.na(suit_r), "sum")[[1]] == 0)))
+
+# ------------------------------ Estimates -------------------------------------
+# Each model's thresholds from its own training rows (year-matched), as 08
+# does for the full model.
+
+plateau <- max(abs(cand_08$change_vs_selected[startsWith(cand_08$candidate,
+                                                         paste0(tuning$fc, " "))]))
+by_st <- lapply(seq_len(K_FOLDS), function(k) rw_by_scale(fold_r[[k]], suit_r, pop, zones))
+
+est <- bind_rows(lapply(seq_len(K_FOLDS), function(k) {
+  tr  <- fold != k
+  m   <- fold_mods[[k]]
+  thr <- thresholds_from(maxnet_prob(m, env[tr & pa == 1, ]), maxnet_prob(m, env[tr & pa == 0, ]))
+  a   <- arp_estimates(fold_r[[k]], pop, thr)
+  data.frame(model = names(fold_r)[k], train_presences = sum(tr & pa == 1),
+             features = length(m$betas), p10 = thr[["p10"]], maxsss = thr[["maxsss"]],
+             arp_weighted = a[["risk_weighted"]], arp_p10 = a[["p10"]],
+             arp_maxsss = a[["maxsss"]], common = sum(by_st[[k]]$common))
+})) |>
+  mutate(own_pct    = 100 * (arp_weighted / rw_full - 1),
+         common_pct = 100 * (common / rw_full - 1),
+         reading    = case_when(abs(common_pct) > plateau ~ "geography",
+                                abs(own_pct)    > plateau ~ "scale",
+                                TRUE                      ~ "within"))
+stopifnot(
+  "rw_by_scale and arp_estimates disagree" =
+    all(abs(sapply(by_st, function(d) sum(d$own)) / est$arp_weighted - 1) < 1e-9),
+  "rw_by_scale's reference differs from the full estimate" =
+    all(abs(sapply(by_st, function(d) sum(d$ref)) / rw_full - 1) < 1e-9)
 )
 
-df$fold <- fold_ids
+cat("\nPopulation at risk without each fold | full model: risk-weighted", fmt(rw_full),
+    "| maxSSS", fmt(arp_full[["maxsss"]]), "| p10", fmt(arp_full[["p10"]]),
+    "| plateau spread +/-", round(plateau, 1), "%\n")
+est |>
+  mutate(across(c(arp_weighted, common, arp_maxsss, arp_p10), fmt),
+         across(c(own_pct, common_pct), ~ round(., 1)),
+         across(c(p10, maxsss), ~ round(., 3))) |>
+  select(model, train_presences, features, arp_weighted, own_pct, common, common_pct,
+         reading, arp_maxsss, maxsss, arp_p10, p10) |>
+  print(row.names = FALSE)
+cat("Range, risk-weighted: own scale", fmt(min(est$arp_weighted)), "to", fmt(max(est$arp_weighted)),
+    "| full model's scale", fmt(min(est$common)), "to", fmt(max(est$common)), "\n")
 
-cat("Presences per fold:", table(df$fold[df$pa == 1]), "\n")
+# ------------------------------- By state -------------------------------------
 
-# -------------------- CV refit and predict ----------------------------------
+stopifnot("States differ between fold models" =
+  all(sapply(by_st, function(d) identical(d$state, by_st[[1]]$state))))
+common_pct <- sapply(by_st, function(d) 100 * (d$common / d$ref - 1))
+own_pct    <- sapply(by_st, function(d) 100 * (d$own    / d$ref - 1))
+colnames(common_pct) <- paste0("common_wo", seq_len(K_FOLDS))
+colnames(own_pct)    <- paste0("own_wo",    seq_len(K_FOLDS))
 
-best_classes <- tolower(tuning$fc)
+sd_r  <- app(fold_r, "sd");    names(sd_r) <- "sd"
+mm    <- app(fold_r, "range"); rng_r <- mm[[2]] - mm[[1]]
+writeRaster(sd_r, FOLD_SD_FILE, overwrite = TRUE)
 
-cv_pred_path <- file.path(DIR_MODELS, "cv_fold_predictions.rds")
+pop_m  <- mask(pop, sd_r)
+s_suit <- zonal(suit_r, zones, fun = "mean", na.rm = TRUE)
+s_sd   <- zonal(sd_r,   zones, fun = "mean", na.rm = TRUE)
+s_pw   <- zonal(c(sd_r * pop_m, pop_m), zones, fun = "sum", na.rm = TRUE)
+names(s_suit) <- c("state", "suit_area")
+names(s_sd)   <- c("state", "sd_area")
+names(s_pw)   <- c("state", "sd_pop_sum", "pop")
 
-if (file.exists(cv_pred_path)) {
-  cat("Loading cached fold predictions\n")
-  pred_stack <- lapply(readRDS(cv_pred_path), terra::unwrap)
-} else {
-  pred_stack <- list()
+st_tab <- data.frame(state = by_st[[1]]$state, full = by_st[[1]]$ref, common_pct, own_pct) |>
+  left_join(s_suit, by = "state") |>
+  left_join(s_sd,   by = "state") |>
+  left_join(transmute(s_pw, state, sd_pop = sd_pop_sum / pop), by = "state") |>
+  arrange(desc(full))
+stopifnot("A state lacks a summary" = !anyNA(st_tab))
 
-  for (k in 1:K_FOLDS) {
-    cat("Fold", k, "\u2014 training on folds",
-        paste(setdiff(1:K_FOLDS, k), collapse = ","), "...")
+cat("\nBy state: change without each fold on the full model's scale (%), and SD across",
+    "the four surfaces (area mean; population-weighted) beside mean suitability:\n")
+st_tab |>
+  mutate(full = fmt(full), across(starts_with("common_wo"), ~ round(., 1)),
+         across(c(suit_area, sd_area, sd_pop), ~ round(., 3))) |>
+  select(state, full, starts_with("common_wo"), suit_area, sd_area, sd_pop) |>
+  print(row.names = FALSE)
 
-    train_idx <- df$fold != k
+v_sd    <- values(sd_r, mat = FALSE)
+v_riv   <- values(covs[["river_dist"]], mat = FALSE)
+ok      <- !is.na(v_sd)
+belt    <- values(belt_r, mat = FALSE) %in% 1
+rho_riv <- c(domain = cor(v_sd[ok], v_riv[ok], method = "spearman"),
+             belt   = cor(v_sd[ok & belt], v_riv[ok & belt], method = "spearman"))
+cat(sprintf("\nSD across the four surfaces: domain mean %.3f, max %.3f | max - min: mean %.3f, max %.3f\n",
+            mean(v_sd[ok]), max(v_sd[ok]),
+            global(rng_r, "mean", na.rm = TRUE)[[1]], global(rng_r, "max", na.rm = TRUE)[[1]]))
+cat(sprintf("Spearman rho, SD vs river distance: domain %.3f | within >= 150 mm %.3f -> drainage reading %s\n",
+            rho_riv[["domain"]], rho_riv[["belt"]],
+            if (rho_riv[["domain"]] <= -0.1) "kept" else "dropped"))
 
-    p_vec   <- as.numeric(as.character(df$pa[train_idx]))
-    env_mat <- df[train_idx, vars]
+# -------------------------------- Figure --------------------------------------
 
-    mod_k <- maxnet(
-      p       = p_vec,
-      data    = env_mat,
-      f       = maxnet.formula(p = p_vec, data = env_mat, classes = best_classes),
-      regmult = tuning$rm
-    )
-
-    cat(" fitted (", length(mod_k$betas), "coefs) ...")
-
-    pred_k <- predict(cov_stack, mod_k, type = "cloglog",
-                      clamp = TRUE, na.rm = TRUE)
-    pred_stack[[k]] <- pred_k
-
-    cat(" predicted.\n")
-  }
-
-  saveRDS(lapply(pred_stack, terra::wrap), cv_pred_path)
-  cat("Computed and saved fold predictions\n")
-}
-
-# Compute mean and SD
-pred_all  <- rast(pred_stack)
-suit_mean <- app(pred_all, mean, na.rm = TRUE)
-suit_sd   <- app(pred_all, sd, na.rm = TRUE)
-
-cat("\nMean suitability \u2014 mean:", round(global(suit_mean, "mean", na.rm = TRUE)[[1]], 4),
-    " range:", round(global(suit_mean, "min", na.rm = TRUE)[[1]], 4), "\u2013",
-    round(global(suit_mean, "max", na.rm = TRUE)[[1]], 4), "\n")
-cat("SD surface      \u2014 mean:", round(global(suit_sd, "mean", na.rm = TRUE)[[1]], 4),
-    " range:", round(global(suit_sd, "min", na.rm = TRUE)[[1]], 4), "\u2013",
-    round(global(suit_sd, "max", na.rm = TRUE)[[1]], 4), "\n")
-
-writeRaster(suit_mean, file.path(DIR_SURFACES, "maxent_cv_mean.tif"), overwrite = TRUE)
-writeRaster(suit_sd, file.path(DIR_SURFACES, "maxent_cv_sd.tif"), overwrite = TRUE)
-
-# ---------------------- Uncertainty map -------------------------------------
-
-adm0  <- gadm(country = "SDN", level = 0, path = here::here("data", "raw"))
-sudan <- st_as_sf(adm0)
-
-sd_masked <- mask(suit_sd, vect(sudan))
-sd_df <- as.data.frame(sd_masked, xy = TRUE, na.rm = TRUE)
-names(sd_df)[3] <- "sd"
-
-occ_pts <- train$occ_clean[, c("longitude", "latitude")]
+display  <- st_as_sf(vect(DISPLAY_ADM0_FILE))
+excluded <- st_as_sf(vect(EXCLUDED_FILE))
+states   <- st_as_sf(vect(ADM1_FILE))
+lim      <- display_limits(display)
+occ_sf   <- st_as_sf(occ, coords = c("longitude", "latitude"), crs = 4326)
+sd_df    <- as.data.frame(sd_r, xy = TRUE, na.rm = TRUE)
 
 p_sd <- ggplot() +
-  geom_sf(data = sudan, fill = "grey90", colour = "grey30", linewidth = 0.5) +
+  geom_sf(data = states, fill = "grey95", colour = NA) +
   geom_raster(data = sd_df, aes(x, y, fill = sd)) +
-  scale_fill_gradientn(
-    colours = c("#2166AC", "#67A9CF", "#D1E5F0", "#FDDBC7",
-                "#EF8A62", "#B2182B"),
-    na.value = "transparent",
-    name = "Prediction\nSD",
-    limits = c(0, max(sd_df$sd))
-  ) +
-  geom_sf(data = sudan, fill = NA, colour = "grey30", linewidth = 0.5) +
-  geom_point(data = occ_pts, aes(longitude, latitude),
-             colour = "black", fill = "white",
-             shape = 21, size = 1.5, stroke = 0.5) +
-  annotation_scale(location = "bl", width_hint = 0.2) +
-  coord_sf(xlim = c(21.5, 39), ylim = c(8.5, 22.5)) +
-  labs(title = "Prediction uncertainty across spatial CV folds",
-       subtitle = "SD of suitability across 4 fold-excluded refits") +
-  theme_minimal(base_size = 11) +
-  theme(panel.grid = element_blank(), axis.title = element_blank())
-
-ggsave(file.path(DIR_FIGS, "prediction_uncertainty_sd.png"), p_sd,
-       width = 7, height = 8, dpi = 300, bg = "white")
-cat("Saved prediction_uncertainty_sd.png\n")
-
-# -------------------- Fold-excluded ARP ------------------------------------
-
-pop_aligned <- rast(file.path(DIR_SURFACES, "worldpop_2025_aligned.tif"))
-occ_xy <- as.matrix(train$occ_clean[, c("longitude", "latitude")])
-bg_xy  <- as.matrix(train$bg_clean[, c("longitude", "latitude")])
-
-# Fold models are refit here so thresholds come from year-matched
-# predictions, as in 08. maxnet is deterministic, so the refit reproduces
-# the models behind the cached surfaces (checked below).
-
-mask_na    <- subst(rast(file.path(DIR_COVARIATES, "ecological_mask_150mm.tif")), 0, NA)
-arp_masked <- numeric(K_FOLDS)
-
-fold_arps <- data.frame(
-  fold_excluded = 1:K_FOLDS,
-  arp_weighted  = numeric(K_FOLDS),
-  arp_p10       = numeric(K_FOLDS),
-  arp_maxsss    = numeric(K_FOLDS)
-)
-
-for (k in 1:K_FOLDS) {
-  pred_k <- pred_stack[[k]]
-
-  # Refit the fold-k model
-  train_idx <- df$fold != k
-  p_vec     <- as.numeric(as.character(df$pa[train_idx]))
-  env_mat   <- df[train_idx, vars]
-  mod_k <- maxnet(
-    p       = p_vec,
-    data    = env_mat,
-    f       = maxnet.formula(p = p_vec, data = env_mat, classes = best_classes),
-    regmult = tuning$rm
-  )
-
-  # Check the refit matches the cached surface at the presence locations
-  ltm_at_occ <- terra::extract(cov_stack[[vars]], occ_xy)
-  chk <- max(abs(predict(mod_k, ltm_at_occ, type = "cloglog", clamp = TRUE)[, 1] -
-                 terra::extract(pred_k, occ_xy)[[1]]), na.rm = TRUE)
-  cat("Fold", k, "refit check (max diff):", signif(chk, 3), "\n")
-
-  # Year-matched predictions for thresholds, as in 08
-  pred_at_occ <- predict(mod_k, train$occ_env[, vars], type = "cloglog")[, 1]
-  pred_at_bg  <- predict(mod_k, train$bg_env[, vars],  type = "cloglog")[, 1]
-
-  fold_arps$arp_weighted[k] <- global(pop_aligned * pred_k, "sum", na.rm = TRUE)[[1]]
-  arp_masked[k] <- global(pop_aligned * mask(pred_k, mask_na), "sum", na.rm = TRUE)[[1]]
-
-  p10_k <- unname(quantile(pred_at_occ, 0.10))
-  fold_arps$arp_p10[k] <- global(pop_aligned * (pred_k >= p10_k),
-                                 "sum", na.rm = TRUE)[[1]]
-
-  candidates <- sort(unique(c(pred_at_occ, pred_at_bg)))
-  sens <- sapply(candidates, function(t) mean(pred_at_occ >= t))
-  spec <- sapply(candidates, function(t) mean(pred_at_bg < t))
-  maxsss_k <- candidates[which.max(sens + spec)]
-  fold_arps$arp_maxsss[k] <- global(pop_aligned * (pred_k >= maxsss_k),
-                                    "sum", na.rm = TRUE)[[1]]
-}
-
-mx_arp <- read.csv(file.path(DIR_TABLES, "arp_summary.csv"))
-
-cat("\n--- ARP across fold-excluded models ---\n\n")
-cat(sprintf("%-15s %12s %12s %12s\n",
-            "Fold excluded", "Risk-weighted", "p10", "maxSSS"))
-for (k in 1:K_FOLDS) {
-  cat(sprintf("%-15s %12s %12s %12s\n",
-              paste("Fold", k),
-              format(round(fold_arps$arp_weighted[k]), big.mark = ","),
-              format(round(fold_arps$arp_p10[k]), big.mark = ","),
-              format(round(fold_arps$arp_maxsss[k]), big.mark = ",")))
-}
-
-cat(sprintf("\n%-15s %12s %12s %12s\n", "Mean",
-    format(round(mean(fold_arps$arp_weighted)), big.mark = ","),
-    format(round(mean(fold_arps$arp_p10)), big.mark = ","),
-    format(round(mean(fold_arps$arp_maxsss)), big.mark = ",")))
-cat(sprintf("%-15s %12s %12s %12s\n", "SD",
-    format(round(sd(fold_arps$arp_weighted)), big.mark = ","),
-    format(round(sd(fold_arps$arp_p10)), big.mark = ","),
-    format(round(sd(fold_arps$arp_maxsss)), big.mark = ",")))
-
-cat("\nFull-data model: weighted =",
-    format(round(mx_arp$arp[mx_arp$metric == "risk_weighted"]), big.mark = ","),
-    "| p10 =",
-    format(round(mx_arp$arp[mx_arp$metric == "p10"]), big.mark = ","),
-    "| maxSSS =",
-    format(round(mx_arp$arp[mx_arp$metric == "maxSSS"]), big.mark = ","), "\n")
-
-cat("\n--- Risk-weighted ARP within ecological mask, by fold excluded ---\n")
-fold_masked <- data.frame(fold_excluded = 1:K_FOLDS, arp_weighted_masked = arp_masked)
-print(transform(fold_masked,
-                arp_weighted_masked = format(round(arp_weighted_masked), big.mark = ",")),
-      row.names = FALSE)
-cat("Range:", format(round(min(arp_masked)), big.mark = ","), "\u2013",
-    format(round(max(arp_masked)), big.mark = ","),
-    "| mean:", format(round(mean(arp_masked)), big.mark = ","),
-    "| SD:", format(round(sd(arp_masked)), big.mark = ","), "\n")
-
-write.csv(fold_masked, file.path(DIR_TABLES, "arp_fold_uncertainty_masked.csv"),
-          row.names = FALSE)
-
-# Append summary rows
-full_weighted <- mx_arp$arp[mx_arp$metric == "risk_weighted"]
-full_p10      <- mx_arp$arp[mx_arp$metric == "p10"]
-full_maxsss   <- mx_arp$arp[mx_arp$metric == "maxSSS"]
-
-fold_arps_out <- rbind(
-  fold_arps,
-  data.frame(fold_excluded = "Mean",
-             arp_weighted = mean(fold_arps$arp_weighted),
-             arp_p10      = mean(fold_arps$arp_p10),
-             arp_maxsss   = mean(fold_arps$arp_maxsss)),
-  data.frame(fold_excluded = "SD",
-             arp_weighted = sd(fold_arps$arp_weighted),
-             arp_p10      = sd(fold_arps$arp_p10),
-             arp_maxsss   = sd(fold_arps$arp_maxsss)),
-  data.frame(fold_excluded = "Full",
-             arp_weighted = full_weighted,
-             arp_p10      = full_p10,
-             arp_maxsss   = full_maxsss)
-)
-
-write.csv(fold_arps_out, file.path(DIR_TABLES, "arp_fold_uncertainty.csv"),
-          row.names = FALSE)
-
-
-# ============== DISSERTATION FIGURE ==============
-adm0   <- gadm(country = "SDN", level = 0, path = here::here("data", "raw"))
-adm1   <- gadm(country = "SDN", level = 1, path = here::here("data", "raw"))
-sudan  <- st_as_sf(adm0)
-states <- st_as_sf(adm1)
-
-sd_masked <- mask(suit_sd, vect(sudan))
-sd_df <- as.data.frame(sd_masked, xy = TRUE, na.rm = TRUE)
-names(sd_df)[3] <- "sd"
-
-occ_pts <- train$occ_clean[, c("longitude", "latitude")]
-
-p_sd <- ggplot() +
-  geom_raster(data = sd_df, aes(x, y, fill = sd)) +
-  scale_fill_gradientn(
-    colours = c("#2166AC", "#67A9CF", "#D1E5F0", "#FDDBC7",
-                "#EF8A62", "#B2182B"),
-    na.value = "transparent",
-    name = "Prediction\nSD",
-    limits = c(0, max(sd_df$sd))
-  ) +
+  layer_excluded(excluded) +
+  scale_fill_spread() +
   layer_admin1(states) +
-  layer_country(sudan) +
-  geom_point(data = occ_pts, aes(longitude, latitude),
-             colour = "black", fill = "white",
-             shape = 21, size = 1.5, stroke = 0.4) +
+  layer_country(display) +
+  layer_occurrences(occ_sf, size = 1.2, stroke = 0.3) +
   add_scalebar() +
-  coord_sf(xlim = c(21.5, 39), ylim = c(8.5, 22.5)) +
-  theme_map()
+  coord_display(lim) +
+  theme_map() +
+  theme(legend.position = c(0.02, 0.98), legend.justification = c(0, 1))
+for (ext in c("png", "pdf"))
+  save_fig(file.path(DIR_FIGS, paste0("fig_fold_sd.", ext)), p_sd,
+           width = FIG_WIDTH_FULL, height = FIG_HEIGHT_MAP)
 
-ggsave(file.path(DIR_FIGS, "prediction_uncertainty_sd.png"), p_sd,
-       width = 16, height = 14, units = "cm", dpi = 300, bg = "white")
-cat("Saved fig_prediction_uncertainty_sd.png\n")
+# --------------------------------- Save -------------------------------------
 
+write.csv(est,    file.path(DIR_TABLES, "arp_fold_excluded.csv"),     row.names = FALSE)
+write.csv(st_tab, file.path(DIR_TABLES, "fold_excluded_by_state.csv"), row.names = FALSE)
 cat("\n14_uncertainty_surface.R complete\n")

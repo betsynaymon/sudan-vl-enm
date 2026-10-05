@@ -1,379 +1,214 @@
 # ============================================================================
 # 18_2025_surface.R
-# Projects the fitted MaxEnt model onto 2025 single-year covariates to test
-# how much interannual climate variation inflates the ARP estimate. 
+# How much does the estimate move with a single year's conditions? The model
+# is fitted on year-matched annual covariates and predicted on the 2000-2024
+# long-term means (07). This predicts the same model onto each single year's
+# rasters, every occurrence year plus PROJ_YEAR, with 2025 population
+# throughout, so only the covariates change. (Not for the common-scale
+# step: same model, so a change in level is the model's response.)
 #
-# Inputs:  outputs/models/maxent_final.rds
-#          outputs/models/selected_tuning.rds
-#          outputs/models/training_data.rds
-#          outputs/models/retained_vars.rds
-#          outputs/surfaces/maxent_suitability.tif
-#          outputs/surfaces/worldpop_2025_aligned.tif
-#          outputs/tables/arp_summary.csv
-#          outputs/tables/arp_by_state.csv
-#          data/raw/ (covariate rasters incl. 2025 annuals)
-# Outputs: outputs/surfaces/maxent_suitability_2025.tif
-#          outputs/surfaces/maxent_suitability_2025_full.tif
-#          outputs/surfaces/binary_p10_2025.tif
-#          outputs/surfaces/binary_maxsss_2025.tif
-#          outputs/tables/arp_comparison_2025.csv
-#          outputs/tables/arp_state_comparison_2025.csv
-#          outputs/figures/suitability_2025_vs_ltm.png
-#          outputs/figures/lst_night_shift_diagnostic.png
-#          outputs/figures/fig_2025_projection_panel.png
+# MODIS Terra, the source of night LST (MOD11A2), has drifted to an earlier
+# overpass since 2020 (TERRA_DRIFT_FROM, params.R). An earlier night pass
+# reads warmer, so night LST from those years is not comparable with
+# earlier years.
+#
+#
+# Inputs:  MODEL_FILE, TUNING_FILE, TRAIN_FILE, SUIT_FILE, POP_ALIGNED_FILE,
+#          DOMAIN_FILE, ADM1_FILE, OCC_RAW_FILE (years), retained_vars.rds,
+#          COV_FILES, COV_ANNUAL, arp_summary.csv (08)
+# Outputs: outputs/tables/single_year_estimates.csv, single_year_by_state.csv
+#          outputs/figures/fig_single_year.png / .pdf
+# Runtime: about 10-15 min (one domain prediction per year).
 # ============================================================================
 
 source(here::here("R", "params.R"))
+source(here::here("R", "helpers.R"))
 source(here::here("R", "plotting_theme.R"))
 
-
 suppressPackageStartupMessages({
-  library(terra)
-  library(maxnet)
-  library(dplyr)
-  library(ggplot2)
-  library(sf)
-  library(geodata)
-  library(patchwork)
-  library(ggspatial)
-  library(rnaturalearth)
+  library(terra); library(dplyr); library(ggplot2); library(patchwork); library(maxnet)
 })
-
-set.seed(SEED)
 
 # ------------------------------ Load inputs ---------------------------------
 
-mod   <- readRDS(file.path(DIR_MODELS, "maxent_final.rds"))
-sel   <- readRDS(file.path(DIR_MODELS, "selected_tuning.rds"))
-train <- readRDS(file.path(DIR_MODELS, "training_data.rds"))
-vars  <- readRDS(file.path(DIR_MODELS, "retained_vars.rds"))
+mod    <- readRDS(MODEL_FILE)
+tuning <- readRDS(TUNING_FILE)
+train  <- readRDS(TRAIN_FILE)
+vars   <- readRDS(file.path(DIR_MODELS, "retained_vars.rds"))
+suit_r <- rast(SUIT_FILE)
+pop    <- rast(POP_ALIGNED_FILE)
+arp_08 <- read.csv(file.path(DIR_TABLES, "arp_summary.csv"))
 
-pred_ltm <- rast(file.path(DIR_SURFACES, "maxent_suitability.tif"))
-
-cat("Model:", sel$fc, "rm =", sel$rm, "\n")
-cat("Covariates:", paste(vars, collapse = ", "), "\n")
-
-# ---------------------- Build 2025 covariate stack --------------------------
-
-cov_files_2025 <- c(
-  slope      = "slope_1km.tif",
-  river_dist = "river_distance_1km.tif",
-  vertisols  = "vertisols_1km.tif",
-  lst_night  = "lst_night_annual_2025_1km.tif",
-  rainfall   = "rainfall_2025_1km.tif"
-)
-
-covs_2025 <- rast(file.path(DIR_COVARIATES, cov_files_2025[vars]))
-names(covs_2025) <- vars
-
-covs_ltm <- rast(file.path(DIR_COVARIATES, COV_FILES[vars]))
-names(covs_ltm) <- vars
-
+dyn   <- intersect(vars, names(COV_ANNUAL))
+years <- sort(unique(c(read.csv(OCC_RAW_FILE)$year, PROJ_YEAR)))
+year_files <- function(y) {
+  f <- COV_FILES
+  f[dyn] <- sub("{year}", y, COV_ANNUAL[dyn], fixed = TRUE)
+  f
+}
+need    <- unlist(lapply(years, function(y) year_files(y)[dyn]))
+missing <- need[!file.exists(file.path(DIR_COVARIATES, need))]
 stopifnot(
-  crs(covs_2025) == crs(covs_ltm),
-  all(res(covs_2025) == res(covs_ltm)),
-  ext(covs_2025) == ext(covs_ltm)
+  "Population grid differs from the surface" = compareGeom(pop, suit_r, stopOnError = FALSE),
+  "Night LST is not a retained covariate"    = "lst_night" %in% vars,
+  "A retained dynamic covariate was not exported for PROJ_YEAR" = all(dyn %in% names(PROJ_ANNUAL))
 )
-cat("Alignment check passed\n")
+if (length(missing) > 0) stop("Missing annual rasters: ", paste(missing, collapse = ", "))
+cat("Model:", tuning$fc, "rm", tuning$rm, "| dynamic covariates:", paste(dyn, collapse = ", "),
+    "\nYears:", years, "| drift-affected from", TERRA_DRIFT_FROM, "\n")
 
-for (v in c("lst_night", "rainfall")) {
-  diff <- global(covs_2025[[v]] - covs_ltm[[v]], c("min", "max", "mean"), na.rm = TRUE)
-  cat(v, "\u2014 2025 minus LTM: mean", round(diff$mean, 2),
-      "| range [", round(diff$min, 2), ",", round(diff$max, 2), "]\n")
+# ----------- The prediction code reproduces 07 (surface) and 08 -------------
+
+cat("\nLong-term means: predicting...\n")
+ltm_r <- terra::predict(domain_covs(vars), mod, type = "cloglog", na.rm = TRUE)
+thr   <- thresholds_from(maxnet_prob(mod, train$occ_env[, vars]),
+                         maxnet_prob(mod, train$bg_env[, vars]))
+arp_lt  <- arp_estimates(suit_r, pop, thr)
+thr_08  <- setNames(arp_08$threshold, arp_08$metric)
+arp_08v <- setNames(arp_08$arp,       arp_08$metric)
+stopifnot(
+  "Surface differs from SUIT_FILE (07)" =
+    global(abs(ltm_r - suit_r), "max", na.rm = TRUE)[[1]] < 1e-6 &&
+    global(is.na(ltm_r) != is.na(suit_r), "sum")[[1]] == 0,
+  "Thresholds differ from arp_summary.csv (08)" = all(abs(thr - thr_08[names(thr)]) < 1e-6),
+  "Estimates differ from arp_summary.csv (08)"  = all(round(arp_lt) == arp_08v[names(arp_lt)])
+)
+cat("Prediction code reproduces 07 (surface) and 08 (thresholds, estimates)\n")
+
+# ------------------------- Cells every year covers ---------------------------
+# A single year's composite can lack a cell the long-term mean has (no
+# clear-sky night all year). Comparisons use cells every surface covers.
+
+common <- !is.na(suit_r)
+for (y in years) common <- common & noNA(domain_covs(vars, year_files(y)))
+pop_all  <- global(mask(pop, suit_r), "sum", na.rm = TRUE)[[1]]
+pop_comm <- global(mask(pop, common, maskvalues = 0), "sum", na.rm = TRUE)[[1]]
+n_lost   <- global(!is.na(suit_r) & !common, "sum", na.rm = TRUE)[[1]]
+cat("Cells without a value in at least one year:", fmt(n_lost),
+    "| population there:", fmt(pop_all - pop_comm), "\n")
+stopifnot("Cells missing in some year hold more than POP_TOL of the population" =
+  (pop_all - pop_comm) / pop_all <= POP_TOL)
+
+# -------------------------------- Each year ---------------------------------
+
+zones   <- state_zones(suit_r)
+lst_max <- max(train$occ_env$lst_night)   # warmest presence night (year-matched), as 08
+
+summ_year <- function(covs_c, pred_c, year) {
+  a   <- arp_estimates(pred_c, pop, thr)
+  hot <- global(pop * pred_c * (covs_c[["lst_night"]] > lst_max), "sum", na.rm = TRUE)[[1]]
+  s   <- zonal(pop * pred_c, zones, fun = "sum", na.rm = TRUE)
+  names(s) <- c("state", if (is.na(year)) "ltm" else as.character(year))
+  list(row = data.frame(
+         year = year,
+         lst_night = global(covs_c[["lst_night"]], "mean", na.rm = TRUE)[[1]],
+         rainfall  = if ("rainfall" %in% vars)
+                       global(covs_c[["rainfall"]], "mean", na.rm = TRUE)[[1]] else NA_real_,
+         risk_weighted = a[["risk_weighted"]], maxsss = a[["maxsss"]], p10 = a[["p10"]],
+         hot_pct = 100 * hot / a[["risk_weighted"]]),
+       state = s)
 }
 
-# ----------------------- Predict 2025 surface -------------------------------
-
-adm0        <- gadm(country = "SDN", level = 0, path = here::here("data", "raw"))
-sudan       <- st_as_sf(adm0)
-mask_r <- rast(file.path(DIR_COVARIATES, "ecological_mask_150mm.tif"))
-
-# Masked version (within ecological mask)
-covs_2025_masked <- mask(mask(covs_2025, vect(sudan)), mask_r, maskvalues = 0)
-pred_2025 <- terra::predict(covs_2025_masked, mod, type = "cloglog", na.rm = TRUE)
-
-cat("\n2025 surface (masked): mean",
-    round(global(pred_2025, "mean", na.rm = TRUE)[[1]], 4), "\n")
-
-# Full-Sudan version (no ecological mask)
-covs_2025_sudan <- mask(covs_2025, vect(sudan))
-pred_2025_full <- terra::predict(covs_2025_sudan, mod, type = "cloglog", na.rm = TRUE)
-
-cat("2025 surface (full):   mean",
-    round(global(pred_2025_full, "mean", na.rm = TRUE)[[1]], 4), "\n")
-cat("LTM surface:           mean",
-    round(global(pred_ltm, "mean", na.rm = TRUE)[[1]], 4), "\n")
-
-diff_full <- pred_2025_full - pred_ltm
-cat("\nDifference (2025 minus LTM): mean",
-    round(global(diff_full, "mean", na.rm = TRUE)[[1]], 4), "\n")
-
-writeRaster(pred_2025, file.path(DIR_SURFACES, "maxent_suitability_2025.tif"),
-            overwrite = TRUE)
-writeRaster(pred_2025_full, file.path(DIR_SURFACES, "maxent_suitability_2025_full.tif"),
-            overwrite = TRUE)
-
-# ---------------------- Thresholds and binary surfaces ----------------------
-
-pred_occ <- predict(mod, train$occ_env, type = "cloglog")[, 1]
-pred_bg  <- predict(mod, train$bg_env, type = "cloglog")[, 1]
-
-p10 <- unname(quantile(pred_occ, 0.10))
-candidates <- sort(unique(c(pred_occ, pred_bg)))
-sens <- sapply(candidates, function(t) mean(pred_occ >= t))
-spec <- sapply(candidates, function(t) mean(pred_bg < t))
-maxsss <- candidates[which.max(sens + spec)]
-
-suit_2025_p10    <- pred_2025_full >= p10
-suit_2025_maxsss <- pred_2025_full >= maxsss
-
-writeRaster(suit_2025_p10, file.path(DIR_SURFACES, "binary_p10_2025.tif"),
-            overwrite = TRUE)
-writeRaster(suit_2025_maxsss, file.path(DIR_SURFACES, "binary_maxsss_2025.tif"),
-            overwrite = TRUE)
-
-# ----------------------------- ARP 2025 ------------------------------------
-
-pop_aligned <- rast(file.path(DIR_SURFACES, "worldpop_2025_aligned.tif"))
-total_pop   <- global(pop_aligned, "sum", na.rm = TRUE)[[1]]
-
-arp_p10_2025      <- global(pop_aligned * suit_2025_p10, "sum", na.rm = TRUE)[[1]]
-arp_maxsss_2025   <- global(pop_aligned * suit_2025_maxsss, "sum", na.rm = TRUE)[[1]]
-arp_weighted_2025 <- global(pop_aligned * pred_2025_full, "sum", na.rm = TRUE)[[1]]
-
-arp_ltm <- read.csv(file.path(DIR_TABLES, "arp_summary.csv"))
-
-arp_compare <- data.frame(
-  metric    = c("p10", "maxSSS", "Risk-weighted"),
-  threshold = c(round(p10, 4), round(maxsss, 4), NA),
-  arp_ltm   = arp_ltm$arp,
-  arp_2025  = c(round(arp_p10_2025), round(arp_maxsss_2025), round(arp_weighted_2025))
-) |>
-  mutate(
-    change     = arp_2025 - arp_ltm,
-    pct_change = round(100 * change / arp_ltm, 1)
-  )
-
-cat("\n--- ARP comparison: LTM vs 2025 ---\n")
-arp_compare |>
-  mutate(across(c(arp_ltm, arp_2025, change),
-                ~ format(., big.mark = ","))) |>
-  print(right = FALSE)
-
-write.csv(arp_compare, file.path(DIR_TABLES, "arp_comparison_2025.csv"),
-          row.names = FALSE)
-
-# ------------- 2025: within-mask ARP and unsupported hot nights -------------
-# Within-mask ARP for both surfaces, and how much ARP sits in cells with
-# nights hotter than any training presence
-
-fmt <- function(x) format(round(x), big.mark = ",")
-
-arp_w_2025_masked <- global(pop_aligned * pred_2025, "sum", na.rm = TRUE)[[1]]
-arp_w_ltm_masked  <- global(pop_aligned * mask(pred_ltm, mask_r, maskvalues = 0),
-                            "sum", na.rm = TRUE)[[1]]
-
-lst_pres_max <- max(train$occ_env$lst_night)
-hot_2025 <- covs_2025$lst_night > lst_pres_max
-hot_ltm  <- covs_ltm$lst_night  > lst_pres_max
-
-arp_hot_2025 <- global(pop_aligned * pred_2025_full * hot_2025, "sum", na.rm = TRUE)[[1]]
-arp_hot_ltm  <- global(pop_aligned * pred_ltm * hot_ltm, "sum", na.rm = TRUE)[[1]]
-pop_hot_2025 <- global(pop_aligned * hot_2025, "sum", na.rm = TRUE)[[1]]
-
-arp_w_ltm <- arp_ltm$arp[arp_ltm$metric == "risk_weighted"]
-
-cat("\n--- 2025 projection: extent and unsupported hot nights ---\n")
-cat("Within mask — LTM:", fmt(arp_w_ltm_masked), "| 2025:", fmt(arp_w_2025_masked),
-    "(", round(100 * (arp_w_2025_masked / arp_w_ltm_masked - 1), 1), "% )\n")
-cat("Presence LST-night maximum:", round(lst_pres_max, 2), "\u00b0C\n")
-cat("Population in hotter cells (2025):", fmt(pop_hot_2025), "\n")
-cat("ARP in hotter cells — LTM:", fmt(arp_hot_ltm), "| 2025:", fmt(arp_hot_2025), "\n")
-cat("Share of the 2025 increase from hotter cells:",
-    round(100 * (arp_hot_2025 - arp_hot_ltm) / (arp_weighted_2025 - arp_w_ltm), 1), "%\n")
-
-# -------------------- State-level comparison --------------------------------
-
-adm1 <- gadm(country = "SDN", level = 1, path = here::here("data", "raw"))
-
-risk_weighted_2025_r <- pop_aligned * pred_2025_full
-
-state_2025 <- data.frame(
-  state      = adm1$NAME_1,
-  total_pop  = terra::extract(pop_aligned, adm1, fun = "sum", na.rm = TRUE, ID = FALSE)[[1]],
-  arp_w_2025 = terra::extract(risk_weighted_2025_r, adm1, fun = "sum", na.rm = TRUE, ID = FALSE)[[1]]
-)
-
-state_ltm <- read.csv(file.path(DIR_TABLES, "arp_by_state.csv"))
-
-state_comp <- state_2025 |>
-  left_join(state_ltm |> select(state, arp_w_ltm = arp_weighted), by = "state") |>
-  mutate(
-    change     = round(arp_w_2025 - arp_w_ltm),
-    pct_change = round(100 * change / arp_w_ltm, 1)
-  ) |>
-  arrange(desc(arp_w_2025))
-
-cat("\nState-level risk-weighted ARP: 2025 vs LTM:\n")
-state_comp |>
-  mutate(across(c(total_pop, arp_w_2025, arp_w_ltm, change),
-                ~ format(round(.), big.mark = ","))) |>
-  print(right = FALSE)
-
-write.csv(state_comp, file.path(DIR_TABLES, "arp_state_comparison_2025.csv"),
-          row.names = FALSE)
-
-# ====================== FIGURES =============================================
-
-# Side-by-side suitability maps
-suit_colours <- c("#2166AC", "#67A9CF", "#D1E5F0", "#FDDBC7",
-                  "#EF8A62", "#B2182B")
-
-make_suit_map <- function(r, title) {
-  df <- as.data.frame(r, xy = TRUE)
-  names(df) <- c("x", "y", "suitability")
-  df <- df[!is.na(df$suitability), ]
-
-  ggplot() +
-    geom_sf(data = sudan, fill = "grey90", colour = "grey30", linewidth = 0.5) +
-    geom_raster(data = df, aes(x = x, y = y, fill = suitability)) +
-    scale_fill_gradientn(colours = suit_colours, limits = c(0, 1),
-                         na.value = "transparent", name = "Suitability") +
-    geom_sf(data = sudan, fill = NA, colour = "grey30", linewidth = 0.5) +
-    coord_sf(xlim = c(21.5, 39), ylim = c(8.5, 23), crs = 4326) +
-    labs(title = title) +
-    theme_minimal() +
-    theme(panel.grid = element_blank(), axis.title = element_blank())
+res <- list(summ_year(mask(domain_covs(vars), common, maskvalues = 0),
+                      mask(suit_r, common, maskvalues = 0), NA_integer_))
+for (y in years) {
+  t0     <- Sys.time()
+  covs_y <- mask(domain_covs(vars, year_files(y)), common, maskvalues = 0)
+  pred_y <- terra::predict(covs_y, mod, type = "cloglog", na.rm = TRUE)
+  res[[length(res) + 1]] <- summ_year(covs_y, pred_y, y)
+  cat(sprintf("  %d | %.1f min\n", y, as.numeric(difftime(Sys.time(), t0, units = "mins"))))
 }
 
-p_ltm  <- make_suit_map(pred_ltm, "Long-term mean (2000\u20132024)")
-p_2025 <- make_suit_map(pred_2025_full, "2025 annual")
+est <- bind_rows(lapply(res, `[[`, "row")) |>
+  mutate(group = case_when(is.na(year)              ~ "long-term mean",
+                           year < TERRA_DRIFT_FROM  ~ "before drift",
+                           TRUE                     ~ "drift"))
+lt  <- filter(est, group == "long-term mean")
+pre <- filter(est, group == "before drift")
+est <- est |>
+  mutate(lst_anom      = lst_night - lt$lst_night,
+         rw_pct        = 100 * (risk_weighted / lt$risk_weighted - 1),
+         above_pre_lst = group == "drift" & lst_night > max(pre$lst_night))
 
-diff_df <- as.data.frame(diff_full, xy = TRUE)
-names(diff_df) <- c("x", "y", "diff")
-diff_df <- diff_df[!is.na(diff_df$diff), ]
+cat("\nBy year (cells every year covers; 2025 population throughout):\n")
+est |>
+  mutate(year = ifelse(is.na(year), "long-term", year),
+         across(c(risk_weighted, maxsss, p10), fmt),
+         across(c(lst_night, lst_anom, rw_pct, hot_pct), ~ round(., 1)),
+         rainfall = round(rainfall)) |>
+  select(year, group, lst_night, lst_anom, rainfall, risk_weighted, rw_pct,
+         maxsss, p10, hot_pct, above_pre_lst) |>
+  print(row.names = FALSE)
 
-p_diff <- ggplot() +
-  geom_sf(data = sudan, fill = "grey90", colour = "grey30", linewidth = 0.5) +
-  geom_raster(data = diff_df, aes(x = x, y = y, fill = diff)) +
-  scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B",
-                       midpoint = 0, name = "\u0394 Suitability",
-                       limits = c(-0.5, 0.5), oob = scales::squish) +
-  geom_sf(data = sudan, fill = NA, colour = "grey30", linewidth = 0.5) +
-  coord_sf(xlim = c(21.5, 39), ylim = c(8.5, 23), crs = 4326) +
-  labs(title = "Difference (2025 minus LTM)") +
-  theme_minimal() +
-  theme(panel.grid = element_blank(), axis.title = element_blank())
+cat(sprintf(paste0("\nBefore drift (%d years): risk-weighted %s to %s (%+.1f%% to %+.1f%% of the ",
+                   "long-term estimate %s); median %s; mean of the annual estimates %s\n"),
+            nrow(pre), fmt(min(pre$risk_weighted)), fmt(max(pre$risk_weighted)),
+            100 * (min(pre$risk_weighted) / lt$risk_weighted - 1),
+            100 * (max(pre$risk_weighted) / lt$risk_weighted - 1),
+            fmt(lt$risk_weighted), fmt(median(pre$risk_weighted)), fmt(mean(pre$risk_weighted))))
+conf <- est$year[est$above_pre_lst]
+cat("Drift years with mean night LST above every earlier year (confounded, not read as climate):",
+    if (length(conf)) paste(conf, collapse = ", ") else "none", "\n")
+cat("Rank of", PROJ_YEAR, "among", length(years), "years (1 = highest risk-weighted):",
+    rank(-est$risk_weighted[!is.na(est$year)])[est$year[!is.na(est$year)] == PROJ_YEAR], "\n")
 
-p_comparison <- (p_ltm | p_2025 | p_diff) +
-  plot_annotation(title = "MaxEnt suitability: long-term mean vs. 2025 projection")
+# ----------------------- Presences from drift years --------------------------
 
-ggsave(file.path(DIR_FIGS, "suitability_2025_vs_ltm.png"), p_comparison,
-       width = 18, height = 7, dpi = 300)
-cat("Saved suitability_2025_vs_ltm.png\n")
+occ      <- train$occ_clean
+ltm_lst  <- terra::extract(domain_covs("lst_night"),
+                           as.matrix(occ[, c("longitude", "latitude")]))[, 1]
+gap      <- train$occ_env$lst_night - ltm_lst
+in_drift <- occ$year >= TERRA_DRIFT_FROM
+med_gap  <- c(before = median(gap[!in_drift]),
+              drift  = if (any(in_drift)) median(gap[in_drift]) else NA_real_)
+cat(sprintf(paste0("\nPresences from drift years: %d (%s) | median year-matched minus ",
+                   "long-term night LST: drift years %.2f C, earlier %.2f C\n"),
+            sum(in_drift),
+            paste(names(table(occ$year[in_drift])), table(occ$year[in_drift]),
+                  sep = ": ", collapse = ", "),
+            med_gap[["drift"]], med_gap[["before"]]))
+cat("Raise for 06:", any(in_drift) && med_gap[["drift"]] - med_gap[["before"]] > 0.5, "\n")
 
-# LST night shift diagnostic
-ltm_vals   <- values(covs_ltm[["lst_night"]], na.rm = TRUE)
-v2025_vals <- values(covs_2025[["lst_night"]], na.rm = TRUE)
+# -------------------------------- By state ----------------------------------
 
-hist_df <- rbind(
-  data.frame(lst = as.numeric(ltm_vals), surface = "Long-term mean"),
-  data.frame(lst = as.numeric(v2025_vals), surface = "2025")
-)
+st <- Reduce(function(a, b) merge(a, b, by = "state"), lapply(res, `[[`, "state"))
+pre_cols <- as.character(pre$year)
+dr_cols  <- as.character(est$year[est$group == "drift"])
+st_tab <- data.frame(state = st$state, ltm = st$ltm,
+                     pre_min_pct = 100 * (apply(st[pre_cols], 1, min) / st$ltm - 1),
+                     pre_max_pct = 100 * (apply(st[pre_cols], 1, max) / st$ltm - 1),
+                     setNames(100 * (st[dr_cols] / st$ltm - 1), paste0("pct_", dr_cols)),
+                     check.names = FALSE) |>
+  arrange(desc(ltm))
+cat("\nBy state: risk-weighted, long-term surface; before-drift range and drift years (% change):\n")
+st_tab |> mutate(ltm = fmt(ltm), across(-c(state, ltm), ~ round(., 1))) |>
+  print(row.names = FALSE)
 
-p_lst <- ggplot(hist_df, aes(x = lst, fill = surface)) +
-  geom_density(alpha = 0.4) +
-  geom_vline(xintercept = c(18, 25), linetype = "dashed", colour = "grey40") +
-  annotate("rect", xmin = 18, xmax = 25, ymin = -Inf, ymax = Inf,
-           alpha = 0.1, fill = "red") +
-  annotate("text", x = 21.5, y = Inf, vjust = 2,
-           label = "Steep response zone", size = 3.5) +
-  scale_fill_manual(values = c("Long-term mean" = "steelblue",
-                               "2025" = "firebrick")) +
-  labs(x = "LST night (\u00b0C)", y = "Density", fill = NULL,
-       title = "LST night distribution shift: LTM vs 2025",
-       subtitle = "Shaded band = steep part of suitability response curve") +
-  theme_minimal()
+# --------------------------------- Figure -----------------------------------
 
-ggsave(file.path(DIR_FIGS, "lst_night_shift_diagnostic.png"), p_lst,
-       width = 8, height = 5, dpi = 300, bg = "white")
-cat("Saved lst_night_shift_diagnostic.png\n")
-
-# ------------ COMBINED PANEL FIGURE ------------
-
-states <- st_as_sf(gadm(country = "SDN", level = 1,
-                        path = here::here("data", "raw")))
-
-XLIM <- c(21.5, 39); YLIM <- c(8.5, 22.5)
-
-make_suit_panel <- function(r, label) {
-  df <- as.data.frame(r, xy = TRUE, na.rm = TRUE)
-  names(df)[3] <- "suitability"
-  ggplot() +
-    geom_raster(data = df, aes(x, y, fill = suitability)) +
-    scale_fill_suitability(
-      name  = "Habitat suitability",
-      guide = guide_colorbar(title.position = "top", title.hjust = 0.5,
-                             barwidth = unit(5, "cm"),
-                             barheight = unit(0.3, "cm"))
-    ) +
-    layer_admin1(states) +
-    layer_country(sudan) +
-    coord_sf(xlim = XLIM, ylim = YLIM) +
-    labs(title = label) +
-    theme_map()
+yr   <- filter(est, group != "long-term mean")
+yr_p <- function(var, ref, ylab, legend = FALSE) {
+  ggplot(yr, aes(year, .data[[var]], colour = group)) +
+    geom_hline(yintercept = ref, linetype = "dashed", colour = "grey50") +
+    geom_point(size = 2) +
+    scale_colour_manual(values = pal_drift, labels = drift_labels, name = NULL,
+                        guide = if (legend) "legend" else "none") +
+    labs(x = NULL, y = ylab)
 }
+p_rw <- yr_p("risk_weighted", lt$risk_weighted, "Population at risk,\nrisk-weighted", legend = TRUE) +
+  scale_y_continuous(labels = function(x) paste0(x / 1e6, "M")) +
+  annotate("text", x = min(yr$year), y = lt$risk_weighted, label = "Long-term mean surface",
+           hjust = 0, vjust = -0.6, size = 2.8, colour = "grey40") +
+  theme(legend.position = "top")
+p_lst  <- yr_p("lst_night", lt$lst_night, "Mean night LST,\nSudan (\u00b0C)")
+p_rain <- yr_p("rainfall",  lt$rainfall,  "Mean rainfall,\nSudan (mm)")
+for (ext in c("png", "pdf"))
+  save_fig(file.path(DIR_FIGS, paste0("fig_single_year.", ext)),
+           (p_rw / p_lst / p_rain) + plot_annotation(tag_levels = "a"),
+           width = FIG_WIDTH_FULL, height = 16)
 
-p_a <- make_suit_panel(pred_ltm,       "(a) Long-term mean (2000\u20132024)")
-p_b <- make_suit_panel(pred_2025_full, "(b) 2025 annual") +
-  add_scalebar(location = "br")
+# --------------------------------- Save -------------------------------------
 
-maps_row <- (p_a | p_b) +
-  plot_layout(guides = "collect") &
-  theme(legend.position    = "bottom",
-        legend.direction   = "horizontal",
-        legend.box.spacing = unit(4, "pt"),
-        legend.margin      = margin(0, 0, 0, 0),
-        plot.title         = element_text(size = 9, hjust = 0,
-                                          margin = margin(b = 2)))
-
-p_c <- ggplot(hist_df, aes(x = lst, fill = surface)) +
-  annotate("rect", xmin = 18, xmax = 25, ymin = -Inf, ymax = Inf,
-           alpha = 0.08, fill = "#B2182B") +
-  geom_density(alpha = 0.4, linewidth = 0.3) +
-  geom_vline(xintercept = c(18, 25), linetype = "dashed",
-             colour = "grey40", linewidth = 0.3) +
-  scale_fill_manual(values = c("Long-term mean" = col_p10,
-                               "2025"           = col_maxsss)) +
-  scale_x_continuous(expand = expansion(mult = c(0.01, 0.01))) +
-  labs(x = "LST night (\u00b0C)", y = "Density", fill = NULL,
-       title = "(c) Nighttime LST distribution, long-term mean vs 2025") +
-  theme_dissertation() +
-  theme(legend.position      = c(0.02, 0.98),
-        legend.justification = c(0, 1),
-        legend.background    = element_rect(fill = alpha("white", 0.8),
-                                            colour = NA),
-        plot.title           = element_text(size = 9, hjust = 0,
-                                            margin = margin(b = 2))) +
-  theme(axis.text.y = element_blank(),
-        axis.title.y = element_blank(),
-        axis.ticks.y = element_blank())
-
-# ------------ Assembly --------------
-FIG_W        <- FIG_WIDTH_FULL
-panel_aspect <- diff(YLIM) / (diff(XLIM) * cos(mean(YLIM) * pi / 180))
-map_panel_w  <- (FIG_WIDTH_FULL - 0.6) / 2          # ~7.7 cm
-map_row_h    <- map_panel_w * panel_aspect + 1.8    # panel + title + colourbar
-c_row_h      <- 6.2                                # <- the knob for (c)
-FIG_H        <- map_row_h + c_row_h
-
-p_2025_panel <- maps_row / p_c +
-  plot_layout(heights = c(map_row_h, c_row_h))
-
-out <- file.path(DIR_FIGS, "fig_2025_projection_panel.png")
-ggsave(out, p_2025_panel,
-        width  = FIG_W, height = FIG_H, units = "cm",
-        dpi = FIG_DPI, bg = "white")
-
-
+write.csv(est,    file.path(DIR_TABLES, "single_year_estimates.csv"), row.names = FALSE)
+write.csv(st_tab, file.path(DIR_TABLES, "single_year_by_state.csv"),  row.names = FALSE)
 cat("\n18_2025_surface.R complete\n")

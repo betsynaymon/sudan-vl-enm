@@ -27,7 +27,10 @@ annual_files <- expand_grid(pattern = unname(COV_ANNUAL), year = occ_years) |>
   mutate(file = str_replace(pattern, fixed("{year}"), as.character(year))) |>
   pull(file)
 
-required <- c(unname(COV_FILES), annual_files)
+# Single-year rasters for 18's projection year (python/04_2025_rasters.ipynb)
+proj_files <- str_replace(unname(PROJ_ANNUAL), fixed("{year}"), as.character(PROJ_YEAR))
+
+required <- c(unname(COV_FILES), annual_files, proj_files)
 missing  <- required[!file.exists(file.path(DIR_COVARIATES, required))]
 
 if (length(missing) == 0) {
