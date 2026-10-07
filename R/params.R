@@ -16,9 +16,8 @@ DIR_FIGS       <- file.path(DIR_OUTPUTS, "figures")
 DIR_TABLES     <- file.path(DIR_OUTPUTS, "tables")
 DIR_MODELS     <- file.path(DIR_OUTPUTS, "models")
 DIR_SURFACES   <- file.path(DIR_OUTPUTS, "surfaces")
-DIR_SENS       <- file.path(DIR_OUTPUTS, "sensitivity")   # script 21
 for (d in c(DIR_POP, DIR_PROCESSED, DIR_OUTPUTS, DIR_FIGS, DIR_TABLES,
-            DIR_MODELS, DIR_SURFACES, DIR_SENS))
+            DIR_MODELS, DIR_SURFACES))
   dir.create(d, showWarnings = FALSE, recursive = TRUE)
 
 
@@ -36,6 +35,8 @@ POP_FILE     <- file.path(DIR_POP, "sdn_pop_2025_100m_constrained.tif") # downlo
 POP_URL <- paste0("https://data.worldpop.org/GIS/Population/Global_2015_2030/",
                   "R2025A/2025/SDN/v1/100m/constrained/sdn_pop_2025_CN_100m_R2025A_v1.tif")
 POP_ALIGNED_FILE <- file.path(DIR_SURFACES, "worldpop_2025_aligned.tif")
+POP_YEAR   <- 2025L   # year of POP_FILE (08)
+USER_AGENT <- "R - MSc dissertation, e.p.naymon@lse.ac.uk"   # identifies downloads (08, 11, 19)
 CANDIDATES_FILE  <- file.path(DIR_SURFACES, "plateau_candidate_surfaces.tif")
 POP_TOL <- 0.001   # max relative change allowed when aligning or summing population
 BIAS_SURFACES_FILE <- file.path(DIR_SURFACES, "bias_correction_surfaces.tif")  # 12; read by 20
@@ -43,6 +44,7 @@ VARIANT_SURFACES_FILE <- file.path(DIR_SURFACES, "variant_surfaces.tif")  # 15; 
 STATE_STATUS_FILE <- file.path(DIR_RAW, "state_endemic_status.csv")  # literature endemic status by state (16)
 DQ_SURFACES_FILE     <- file.path(DIR_SURFACES, "data_quality_refit_surfaces.tif")     # 10; read by 20
 TT_COV_SURFACES_FILE <- file.path(DIR_SURFACES, "accessibility_covariate_surfaces.tif") # 24; read by 20
+BELT_SURFACES_FILE   <- file.path(DIR_SURFACES, "belt_background_surfaces.tif")       # 21 (layers fixed, tuned)
 
 # ----- Covariate filename lookup -----
 # All candidates screened in 03 (static layers and 2000-2024 long-term means).
@@ -88,9 +90,13 @@ SEASONAL_ANNUAL <- c(
 # the covariate grid. Coded 1 inside, 0 outside.
 DOMAIN_FILE <- file.path(DIR_PROCESSED, "domain_sudan.tif")
 
-# Supplement only (21): background restricted to >= 150 mm mean annual
-# rainfall. Threshold set in python/01_study_area.ipynb.
+# The dissertation's ecological mask: CHIRPS mean annual rainfall 2000-2024
+# >= SENS_MASK_MM, coded 1 / 0 over the GEE export rectangle, not Sudan
+# (python/01_study_area.ipynb). Not a model input: it defines the >= 150 mm
+# region for within-belt diagnostics and the restricted background of the
+# supplement check (21), always intersected with the domain.
 SENS_MASK_FILE <- file.path(DIR_RAW, "ecological_mask_150mm.tif")
+SENS_MASK_MM   <- 150   # threshold the file was made with; 21 checks it against the rainfall covariate
 
 # ----- Study area -----
 # Modelled domain: Sudan (GADM) excluding the Halaib Triangle, for which
@@ -270,3 +276,18 @@ PROJ_ANNUAL <- COV_ANNUAL[c("lst_night", "rainfall")]
 # mission pages). An earlier night pass reads warmer, so night LST from these
 # years is not comparable with earlier years.
 TERRA_DRIFT_FROM <- 2021
+
+# ----- Hindcast against Alvar et al. (19) -----
+# Alvar, Yactayo & Bern 2006 (Trends Parasitol.): the only earlier
+# population-at-risk figures for Sudan, from unpublished Federal Ministry of
+# Health data, with "at risk" undefined. They refer to 2005.
+HINDCAST_YEAR      <- 2005L
+ALVAR_STATE        <- "Al Qadarif"   # Gedaref, as named in ADM1_FILE
+ALVAR_STATE_ARP    <- 980000         # Gedaref
+ALVAR_NATIONAL_ARP <- 2780000        # Sudan before 2011, including South Sudan: context only
+# WorldPop has no constrained surface before 2015, so the hindcast population
+# is the unconstrained, UN-adjusted 100 m product (people spread over all
+# land), unlike POP_FILE.
+POP_HINDCAST_FILE <- file.path(DIR_POP, sprintf("sdn_ppp_%d_UNadj.tif", HINDCAST_YEAR))
+POP_HINDCAST_URL  <- sprintf(paste0("https://data.worldpop.org/GIS/Population/Global_2000_2020/",
+                                    "%d/SDN/sdn_ppp_%d_UNadj.tif"), HINDCAST_YEAR, HINDCAST_YEAR)

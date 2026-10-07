@@ -20,7 +20,7 @@ source(here::here("R", "helpers.R"))
 source(here::here("R", "plotting_theme.R"))
 
 suppressPackageStartupMessages({
-  library(terra); library(dplyr); library(maxnet); library(ggplot2); library(httr)
+  library(terra); library(dplyr); library(maxnet); library(ggplot2)
 })
 
 mod    <- readRDS(MODEL_FILE)
@@ -70,27 +70,16 @@ cat("maxSSS:", format(round(area_maxsss), big.mark = ","), "km\u00b2",
 
 # ----------------------------- Population -----------------------------------
 
-if (!file.exists(POP_FILE)) {
-  response <- GET(POP_URL, user_agent("R - MSc dissertation, e.p.naymon@lse.ac.uk"),
-                  write_disk(POP_FILE, overwrite = TRUE), progress())
-  stopifnot("WorldPop download failed" = status_code(response) == 200)
-}
-pop_100m  <- rast(POP_FILE)
-raw_total <- global(pop_100m, "sum", na.rm = TRUE)[[1]]
-
-# 100 m -> covariate grid by summing; the total must be conserved
-agg_factor  <- round(res(suit_r)[1] / res(pop_100m)[1])
-pop_aligned <- resample(aggregate(pop_100m, fact = agg_factor, fun = "sum", na.rm = TRUE),
-                        suit_r, method = "sum")
-aligned_total <- global(pop_aligned, "sum", na.rm = TRUE)[[1]]
-stopifnot("Population total not conserved in alignment" =
-  abs(aligned_total - raw_total) / raw_total < POP_TOL)
+download_once(POP_FILE, POP_URL)
+al          <- align_pop(rast(POP_FILE), suit_r)   # 100 m summed to the covariate grid
+pop_aligned <- al$pop
+raw_total   <- al$raw_total
 writeRaster(pop_aligned, POP_ALIGNED_FILE, overwrite = TRUE)
 
 # People in cells with no prediction (outside the domain or a missing covariate)
 pop_pred <- global(mask(pop_aligned, suit_r), "sum", na.rm = TRUE)[[1]]
-cat("\nWorldPop 2025:", fmt(raw_total), "| in cells with a prediction:", fmt(pop_pred),
-    "| without:", fmt(raw_total - pop_pred), "\n")
+cat(paste0("\nWorldPop ", POP_YEAR, ":"), fmt(raw_total), "| in cells with a prediction:",
+    fmt(pop_pred), "| without:", fmt(raw_total - pop_pred), "\n")
 
 # ------------------------- National estimates -------------------------------
 

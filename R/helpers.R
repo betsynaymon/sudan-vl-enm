@@ -127,6 +127,14 @@ domain_covs <- function(vars, files = COV_FILES) {
   names(r) <- vars
   terra::mask(r, terra::rast(DOMAIN_FILE), maskvalues = 0)
 }
+# Covariate file names for one year: COV_FILES with every dynamic covariate
+# replaced by that year's annual raster (18, 19). Index by the retained
+# covariates; PROJ_YEAR has only PROJ_ANNUAL's layers.
+year_files <- function(year) {
+  f <- COV_FILES
+  f[names(COV_ANNUAL)] <- sub("{year}", year, COV_ANNUAL, fixed = TRUE)
+  f
+}
 
 # Spatial CV for any algorithm, as in 06: each fold's model is fitted on the
 # other folds and scored on its own. fit(pa, env) returns a model and
@@ -160,14 +168,38 @@ cv_fit <- function(pa, env, fold, fit, pred, within = NULL, keep_models = FALSE)
 cv_maxnet <- function(pa, env, fold, fc, rm, within = NULL, keep_models = FALSE)
   cv_fit(pa, env, fold, function(p, d) fit_maxnet(p, d, fc, rm), maxnet_prob, within, keep_models)
 
+# The 06 grid (ENM_FC x ENM_RM), each configuration cross-validated with
+# cv_maxnet (15, 21, 24). A configuration whose fit fails on a fold is NA, as
+# 06 leaves it unscored; n_cbi counts the folds with a CBI. With `within`,
+# within-belt scores are added (cbi_wet, cbi_wet_sd, auc_wet).
+tune_grid <- function(pa, env, fold, within = NULL, progress = FALSE) {
+  grid <- expand.grid(fc = ENM_FC, rm = ENM_RM, stringsAsFactors = FALSE)
+  dplyr::bind_rows(lapply(seq_len(nrow(grid)), function(i) {
+    cv <- tryCatch(cv_maxnet(pa, env, fold, grid$fc[i], grid$rm[i], within),
+                   error = function(e) NULL)
+    if (progress && i %% length(ENM_RM) == 0) cat("  grid", i, "of", nrow(grid), "\n")
+    stat <- function(col, f) if (is.null(cv)) NA_real_ else f(cv[[col]], na.rm = TRUE)
+    out <- data.frame(grid[i, ],
+                      cbi    = stat("cbi", mean),
+                      cbi_sd = stat("cbi", sd),
+                      auc    = if (is.null(cv)) NA_real_ else mean(cv$auc),
+                      n_cbi  = if (is.null(cv)) 0L else sum(!is.na(cv$cbi)))
+    if (!is.null(within))
+      out <- cbind(out, cbi_wet = stat("cbi_wet", mean), cbi_wet_sd = stat("cbi_wet", sd),
+                   auc_wet = stat("auc_wet", mean))
+    out
+  }))
+}
+
 # Fit, cross-validate and threshold one configuration on a presence and
-# background set: the refit used by 10, 12 and 15.
-refit_maxnet <- function(occ_env, bg_env, occ_fold, bg_fold, fc, rm) {
+# background set: the refit used by 10, 12, 15, 21 and 24. `within` adds
+# within-belt CV scores (cv_maxnet); NULL leaves the output unchanged.
+refit_maxnet <- function(occ_env, bg_env, occ_fold, bg_fold, fc, rm, within = NULL) {
   pa  <- c(rep(1, nrow(occ_env)), rep(0, nrow(bg_env)))
   env <- rbind(occ_env, bg_env)
   mod <- fit_maxnet(pa, env, fc, rm)
   list(mod = mod,
-       cv  = cv_maxnet(pa, env, c(occ_fold, bg_fold), fc, rm),
+       cv  = cv_maxnet(pa, env, c(occ_fold, bg_fold), fc, rm, within),
        thr = thresholds_from(as.numeric(predict(mod, occ_env, type = "cloglog")),
                              as.numeric(predict(mod, bg_env,  type = "cloglog"))))
 }
@@ -188,6 +220,32 @@ arp_estimates <- function(suit_r, pop_r, thr) {
 state_zones <- function(template) {
   z <- terra::rasterize(terra::vect(ADM1_FILE), template, field = "NAME_1", touches = TRUE)
   terra::mask(z, terra::rast(DOMAIN_FILE), maskvalues = 0)
+}
+
+# Download a raw input once (08, 11, 19). A failed download is deleted, so a
+# partial or error file is never reused as if complete.
+download_once <- function(file, url) {
+  if (file.exists(file)) return(invisible(file))
+  ok <- tryCatch({
+    resp <- httr::GET(url, httr::user_agent(USER_AGENT),
+                      httr::write_disk(file, overwrite = TRUE), httr::progress())
+    httr::status_code(resp) == 200
+  }, error = function(e) FALSE)
+  if (!ok) { unlink(file); stop("Download failed: ", url) }
+  invisible(file)
+}
+
+# WorldPop 100 m population summed to the grid of `template`: aggregate by the
+# nearest whole factor, then resample by sum (08, 19). Stops unless the total
+# is conserved within POP_TOL.
+align_pop <- function(pop_100m, template) {
+  raw_total <- terra::global(pop_100m, "sum", na.rm = TRUE)[[1]]
+  fact      <- round(terra::res(template)[1] / terra::res(pop_100m)[1])
+  pop <- terra::resample(terra::aggregate(pop_100m, fact = fact, fun = "sum", na.rm = TRUE),
+                         template, method = "sum")
+  if (abs(terra::global(pop, "sum", na.rm = TRUE)[[1]] - raw_total) / raw_total >= POP_TOL)
+    stop("Population total not conserved in alignment")
+  list(pop = pop, raw_total = raw_total)
 }
 
 # Weiss et al. (2018) travel time to the nearest city (minutes) on the grid of

@@ -101,11 +101,9 @@ cat("\nRows missing each covariate:\n")
 print(rbind(presences = colSums(is.na(occ_all)), background = colSums(is.na(bg_all))))
 
 # -------------------------------- Refits ------------------------------------
-# Per variant: the 06 grid (cv_maxnet), then refit_maxnet at the primary
+# Per variant: the 06 grid (tune_grid), then refit_maxnet at the primary
 # settings and at the variant's highest-CBI configuration, predicted over the
 # domain with long-term means.
-
-grid <- expand.grid(fc = ENM_FC, rm = ENM_RM, stringsAsFactors = FALSE)
 
 run_variant <- function(nm) {
   t0 <- Sys.time()
@@ -115,13 +113,13 @@ run_variant <- function(nm) {
   pa <- c(rep(1, nrow(oe)), rep(0, nrow(be)))
   env  <- rbind(oe, be)
   fold <- c(occ$fold[ko], bg$fold[kb])
-  tune <- bind_rows(lapply(seq_len(nrow(grid)), function(i) {
+  tune <- data.frame(variant = nm, tune_grid(pa, env, fold), function(i) {
     cv <- tryCatch(cv_maxnet(pa, env, fold, grid$fc[i], grid$rm[i]), error = function(e) NULL)
     data.frame(variant = nm, grid[i, ],
                cbi    = if (is.null(cv)) NA_real_ else mean(cv$cbi, na.rm = TRUE),
                cbi_sd = if (is.null(cv)) NA_real_ else sd(cv$cbi, na.rm = TRUE),
                auc    = if (is.null(cv)) NA_real_ else mean(cv$auc))
-  }))
+  })
   best <- tune[which.max(tune$cbi), ]
   sel  <- tune[tune$fc == tuning$fc & tune$rm == tuning$rm, ]
   covs <- domain_covs(v, files = files_all)

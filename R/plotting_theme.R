@@ -190,6 +190,17 @@ pal_drift    <- c("before drift" = "grey30", "drift" = "#B2182B")
 drift_labels <- c("before drift" = "Before Terra's drift",
                   "drift"        = paste0("Terra drifting (", TERRA_DRIFT_FROM, " on)"))
 
+# — Background extent (21) —
+pal_belt    <- c(primary = "#969696", fixed = "#4575B4", tuned = "#A50026")
+belt_labels <- c(primary = "Whole-domain background (primary)",
+                 fixed   = paste0("\u2265 ", SENS_MASK_MM, " mm background, primary settings"),
+                 tuned   = paste0("\u2265 ", SENS_MASK_MM, " mm background, re-tuned"))
+
+# — Difference between two suitability surfaces (21): blue lower, red higher —
+pal_diff <- c(low = "#2166AC", mid = "#F7F7F7", high = "#B2182B")
+scale_fill_diff <- function(lim, name = "Difference in\nsuitability", ...)
+  scale_fill_gradient2(low = pal_diff[["low"]], mid = pal_diff[["mid"]], high = pal_diff[["high"]],
+                       midpoint = 0, limits = c(-lim, lim), name = name, ...)
 # ----------------------------------------------------------------------------
 # 4. BASE THEME (non-map figures)
 #    Histogram, density, line plots, PDPs, threshold curve, etc.
@@ -337,6 +348,10 @@ layer_occurrences <- function(data, mapping = aes(), size = 1.8,
 layer_excluded <- function(data) {
   ggplot2::geom_sf(data = data, fill = "grey80", colour = NA)
 }
+
+# Outline of the >= SENS_MASK_MM region, the dissertation's background extent (21)
+layer_region <- function(data, colour = "grey15", linewidth = 0.35, linetype = "22")
+  geom_sf(data = data, fill = NA, colour = colour, linewidth = linewidth, linetype = linetype)
 
 # Map extent: the full display outline plus a margin in degrees (07, 12, 17,
 # fig_study_area and the remaining map scripts).

@@ -22,7 +22,7 @@ source(here::here("R", "helpers.R"))
 source(here::here("R", "plotting_theme.R"))
 
 suppressPackageStartupMessages({
-  library(terra); library(dplyr); library(ggplot2); library(httr)
+  library(terra); library(dplyr); library(ggplot2)
 })
 
 # ------------------------------ Load inputs ---------------------------------
@@ -38,11 +38,7 @@ cat("Presences:", nrow(occ), "| background:", nrow(bg), "\n")
 # ------------------------- Travel-time surface ------------------------------
 # Raw input, downloaded once (not a cache of a derived output).
 
-if (!file.exists(TT_FILE)) {
-  response <- GET(TT_URL, user_agent("R - MSc dissertation, e.p.naymon@lse.ac.uk"),
-                  write_disk(TT_FILE, overwrite = TRUE), progress())
-  stopifnot("Travel-time download failed" = status_code(response) == 200)
-}
+download_once(TT_FILE, TT_URL)
 
 tt_raw <- rast(TT_FILE)
 e_tt   <- as.vector(ext(tt_raw))

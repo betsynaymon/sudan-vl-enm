@@ -1,0 +1,6 @@
+"source","measure","estimate","pct_of_state_pop","ratio_to_alvar"
+"This model, long-term surface","risk-weighted index",1187126.4041145,76.4620988215516,1.21135347358622
+"This model, long-term surface","people in cells >= maxSSS",1375011.53187498,88.5636670758924,1.40307299170916
+"This model, 2005 surface","risk-weighted index",1082050.95003614,69.6942519220026,1.10413362248585
+"This model, 2005 surface","people in cells >= maxSSS",1245587.65676924,80.227552999157,1.27100781302984
+"Alvar et al. 2006","people at risk (undefined)",980000,63.1212115116035,1

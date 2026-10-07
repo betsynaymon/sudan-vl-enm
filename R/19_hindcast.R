@@ -1,203 +1,177 @@
 # ============================================================================
 # 19_hindcast.R
-# Projects the MaxEnt model onto 2005 covariates with 2005 WorldPop population
-# to compare against Alvar et al. (2006)'s expert-derived Gedaref ARP of
-# 0.98M.
+# The model's figure for Gedaref beside the only earlier population-at-risk
+# figure for the state: Alvar et al. (2006), ALVAR_STATE_ARP in HINDCAST_YEAR,
+# from unpublished Federal Ministry of Health data with "at risk" undefined.
+# Both surfaces carry HINDCAST_YEAR population: the long-term surface (07),
+# which is the model as reported, and the HINDCAST_YEAR surface (the
+# dissertation's comparison), which adds one year's weather (18). National
+# figures are context only.
 #
-# Inputs:  outputs/models/maxent_final.rds
-#          outputs/models/selected_tuning.rds
-#          outputs/models/training_data.rds
-#          outputs/models/retained_vars.rds
-#          outputs/surfaces/maxent_suitability.tif
-#          outputs/tables/arp_summary.csv
-#          data/raw/ (2005 covariate rasters + population)
-# Outputs: outputs/surfaces/maxent_suitability_2005.tif
-#          outputs/tables/arp_hindcast_comparison.csv
-#          outputs/figures/suitability_2005_vs_ltm.png
+# Population: WorldPop has no constrained surface before 2015, so
+# POP_HINDCAST_FILE is the unconstrained, UN-adjusted product, which spreads
+# people over all land; POP_FILE (08) is constrained. Within a population year
+# the two surfaces compare; across population years, growth, redistribution
+# and the change of product are mixed.
+#
+# Inputs:  MODEL_FILE, TUNING_FILE, TRAIN_FILE, SUIT_FILE, POP_ALIGNED_FILE,
+#          POP_HINDCAST_FILE (downloaded once from POP_HINDCAST_URL),
+#          DOMAIN_FILE, ADM1_FILE, retained_vars.rds, COV_FILES, COV_ANNUAL,
+#          arp_summary.csv (08), single_year_estimates.csv (18: run 18 first)
+# Outputs: outputs/tables/hindcast_national.csv, hindcast_gedaref.csv,
+#          arp_literature_context.csv
 # ============================================================================
 
 source(here::here("R", "params.R"))
+source(here::here("R", "helpers.R"))
 
 suppressPackageStartupMessages({
-  library(terra)
-  library(maxnet)
-  library(dplyr)
-  library(ggplot2)
-  library(sf)
-  library(geodata)
-  library(patchwork)
-  library(rnaturalearth)
+  library(terra); library(dplyr); library(maxnet)
 })
-
-set.seed(SEED)
 
 # ------------------------------ Load inputs ---------------------------------
 
-mod   <- readRDS(file.path(DIR_MODELS, "maxent_final.rds"))
-sel   <- readRDS(file.path(DIR_MODELS, "selected_tuning.rds"))
-train <- readRDS(file.path(DIR_MODELS, "training_data.rds"))
-vars  <- readRDS(file.path(DIR_MODELS, "retained_vars.rds"))
+mod     <- readRDS(MODEL_FILE)
+tuning  <- readRDS(TUNING_FILE)
+train   <- readRDS(TRAIN_FILE)
+vars    <- readRDS(file.path(DIR_MODELS, "retained_vars.rds"))
+suit_r  <- rast(SUIT_FILE)
+pop_now <- rast(POP_ALIGNED_FILE)
+arp_08  <- read.csv(file.path(DIR_TABLES, "arp_summary.csv"))
+yr_18   <- read.csv(file.path(DIR_TABLES, "single_year_estimates.csv"))
 
-pred_ltm <- rast(file.path(DIR_SURFACES, "maxent_suitability.tif"))
-
-cat("Model:", sel$fc, "rm =", sel$rm, "\n")
-
-# Thresholds from training data
-pred_occ <- predict(mod, train$occ_env, type = "cloglog")[, 1]
-pred_bg  <- predict(mod, train$bg_env, type = "cloglog")[, 1]
-
-p10 <- unname(quantile(pred_occ, 0.10))
-candidates <- sort(unique(c(pred_occ, pred_bg)))
-sens <- sapply(candidates, function(t) mean(pred_occ >= t))
-spec <- sapply(candidates, function(t) mean(pred_bg < t))
-maxsss <- candidates[which.max(sens + spec)]
-
-cat("p10:   ", round(p10, 4), "\n")
-cat("maxSSS:", round(maxsss, 4), "\n")
-
-# ---------------------- Build 2005 covariate stack --------------------------
-
-cov_files_2005 <- c(
-  slope      = "slope_1km.tif",
-  river_dist = "river_distance_1km.tif",
-  vertisols  = "vertisols_1km.tif",
-  lst_night  = "lst_night_annual_2005_1km.tif",
-  rainfall   = "rainfall_2005_1km.tif"
-)
-
-covs_2005 <- rast(file.path(DIR_COVARIATES, cov_files_2005[vars]))
-names(covs_2005) <- vars
-
-covs_ltm <- rast(file.path(DIR_COVARIATES, COV_FILES[vars]))
-names(covs_ltm) <- vars
-
+hc_lab   <- as.character(HINDCAST_YEAR)
+hc_files <- year_files(HINDCAST_YEAR)[vars]
 stopifnot(
-  crs(covs_2005) == crs(covs_ltm),
-  all(res(covs_2005) == res(covs_ltm)),
-  ext(covs_2005) == ext(covs_ltm)
+  "HINDCAST_YEAR falls in Terra's drift period" = HINDCAST_YEAR < TERRA_DRIFT_FROM,
+  "Missing annual rasters for HINDCAST_YEAR"    = all(file.exists(file.path(DIR_COVARIATES, hc_files))),
+  "HINDCAST_YEAR is not in 18's table (run 18)" = sum(yr_18$year %in% HINDCAST_YEAR) == 1,
+  "Population grid differs from the surface"    = compareGeom(pop_now, suit_r, stopOnError = FALSE)
 )
-cat("Alignment check passed\n")
+cat("Model:", tuning$fc, "rm", tuning$rm, "| hindcast year:", HINDCAST_YEAR, "| annual files:",
+    paste(hc_files[intersect(vars, names(COV_ANNUAL))], collapse = ", "), "\n")
 
-for (v in c("lst_night", "rainfall")) {
-  diff <- global(covs_2005[[v]] - covs_ltm[[v]], c("min", "max", "mean"), na.rm = TRUE)
-  cat(v, "\u2014 2005 minus LTM: mean", round(diff$mean, 2),
-      "| range [", round(diff$min, 2), ",", round(diff$max, 2), "]\n")
-}
+# ----------- The prediction code reproduces 07 (surface) and 08 -------------
 
-# ----------------------- Predict 2005 surface -------------------------------
-
-adm0  <- gadm(country = "SDN", level = 0, path = here::here("data", "raw"))
-sudan <- st_as_sf(adm0)
-mask_r <- rast(file.path(DIR_COVARIATES, "ecological_mask_150mm.tif"))
-
-# Full-Sudan prediction (for ARP overlay)
-covs_2005_sudan <- mask(covs_2005, vect(sudan))
-pred_2005_full <- terra::predict(covs_2005_sudan, mod, type = "cloglog", na.rm = TRUE)
-
-cat("\n2005 surface (full): mean",
-    round(global(pred_2005_full, "mean", na.rm = TRUE)[[1]], 4), "\n")
-cat("LTM surface:         mean",
-    round(global(pred_ltm, "mean", na.rm = TRUE)[[1]], 4), "\n")
-
-writeRaster(pred_2005_full, file.path(DIR_SURFACES, "maxent_suitability_2005.tif"),
-            overwrite = TRUE)
-
-# -------------------- 2005 population and ARP -------------------------------
-
-pop_2005_raw <- rast(file.path(DIR_COVARIATES, "population", "sdn_ppp_2005_UNadj.tif"))
-
-pop_2005 <- terra::project(pop_2005_raw, pred_2005_full, method = "sum")
-pop_2005 <- mask(pop_2005, pred_2005_full)
-
-total_pop_2005 <- global(pop_2005, "sum", na.rm = TRUE)[[1]]
-cat("Total population (2005):", format(round(total_pop_2005), big.mark = ","), "\n")
-
-# National ARP
-suit_2005_p10    <- pred_2005_full >= p10
-suit_2005_maxsss <- pred_2005_full >= maxsss
-
-arp_p10_2005      <- global(pop_2005 * suit_2005_p10, "sum", na.rm = TRUE)[[1]]
-arp_maxsss_2005   <- global(pop_2005 * suit_2005_maxsss, "sum", na.rm = TRUE)[[1]]
-arp_weighted_2005 <- global(pop_2005 * pred_2005_full, "sum", na.rm = TRUE)[[1]]
-
-cat("\nAt-Risk Population (2005 surface, 2005 population):\n")
-cat("  p10:           ", format(round(arp_p10_2005), big.mark = ","), "\n")
-cat("  maxSSS:        ", format(round(arp_maxsss_2005), big.mark = ","), "\n")
-cat("  Risk-weighted: ", format(round(arp_weighted_2005), big.mark = ","), "\n")
-
-# Gedaref extraction (direct comparison to Alvar 0.98M)
-adm1 <- gadm(country = "SDN", level = 1, path = here::here("data", "raw"))
-gedaref <- adm1[adm1$NAME_1 == "Al Qadarif", ]
-
-arp_gedaref_weighted <- terra::extract(pop_2005 * pred_2005_full, gedaref,
-                                       fun = "sum", na.rm = TRUE, ID = FALSE)[[1]]
-arp_gedaref_maxsss   <- terra::extract(pop_2005 * suit_2005_maxsss, gedaref,
-                                       fun = "sum", na.rm = TRUE, ID = FALSE)[[1]]
-pop_gedaref <- terra::extract(pop_2005, gedaref, fun = "sum", na.rm = TRUE, ID = FALSE)[[1]]
-
-cat("\nGedaref (Al Qadarif):\n")
-cat("  Population:    ", format(round(pop_gedaref), big.mark = ","), "\n")
-cat("  ARP weighted:  ", format(round(arp_gedaref_weighted), big.mark = ","), "\n")
-cat("  ARP maxSSS:    ", format(round(arp_gedaref_maxsss), big.mark = ","), "\n")
-cat("  Alvar (2006):   980,000\n")
-cat("  Ratio (model/Alvar):", round(arp_gedaref_weighted / 980000, 2), "\n")
-
-# -------------------- Comparison table --------------------------------------
-
-arp_ltm <- read.csv(file.path(DIR_TABLES, "arp_summary.csv"))
-
-comparison <- data.frame(
-  source = c("Alvar 2006 (expert-derived)",
-             "This model (2005 covariates)",
-             "This model (LTM)",
-             "Pigott 2014 (global BRT)"),
-  year_conditions = c("2005", "2005", "2000\u20132024", "~2010"),
-  population_year = c("~2005", "2005", "2025", "2010"),
-  boundaries = c("Pre-split", "Current Sudan", "Current Sudan", "Current Sudan"),
-  arp_estimate = c("2.78M (incl. S. Sudan)",
-                   format(round(arp_weighted_2005), big.mark = ","),
-                   format(round(arp_ltm$arp[arp_ltm$metric == "risk_weighted"]), big.mark = ","),
-                   "16,259,580"),
-  method = c("Expert/case-based", "ENM risk-weighted", "ENM risk-weighted",
-             "BRT binary (0.19)")
+cat("\nLong-term means: predicting...\n")
+ltm_r   <- terra::predict(domain_covs(vars), mod, type = "cloglog", na.rm = TRUE)
+thr     <- thresholds_from(maxnet_prob(mod, train$occ_env[, vars]),
+                           maxnet_prob(mod, train$bg_env[, vars]))
+thr_08  <- setNames(arp_08$threshold, arp_08$metric)
+arp_08v <- setNames(arp_08$arp,       arp_08$metric)
+arp_lt  <- arp_estimates(suit_r, pop_now, thr)
+stopifnot(
+  "Surface differs from SUIT_FILE (07)" =
+    global(abs(ltm_r - suit_r), "max", na.rm = TRUE)[[1]] < 1e-6 &&
+    global(is.na(ltm_r) != is.na(suit_r), "sum")[[1]] == 0,
+  "Thresholds differ from arp_summary.csv (08)" = all(abs(thr - thr_08[names(thr)]) < 1e-6),
+  "Estimates differ from arp_summary.csv (08)"  = all(round(arp_lt) == arp_08v[names(arp_lt)])
 )
+cat("Prediction code reproduces 07 (surface) and 08 (thresholds, estimates)\n")
+cat("p10:", round(thr[["p10"]], 3), "| maxSSS:", round(thr[["maxsss"]], 3), "\n")
 
-cat("\nCross-study ARP comparison:\n")
-print(comparison, right = FALSE, row.names = FALSE)
+# ---------------- The hindcast-year surface reproduces 18 --------------------
+# 18 predicts the same model onto each year with POP_FILE population, on the
+# cells the long-term surface covers. With that population, 19's surface must
+# give 18's row exactly.
 
-write.csv(comparison, file.path(DIR_TABLES, "arp_hindcast_comparison.csv"),
-          row.names = FALSE)
+cat("\n", hc_lab, " covariates: predicting...\n", sep = "")
+hc_r <- mask(terra::predict(domain_covs(vars, year_files(HINDCAST_YEAR)), mod,
+                            type = "cloglog", na.rm = TRUE), suit_r)
+row_18 <- yr_18[yr_18$year %in% HINDCAST_YEAR, ]
+lt_18  <- yr_18[yr_18$group == "long-term mean", ]
+r18    <- unlist(row_18[c("risk_weighted", "p10", "maxsss")])
+arp_hc_now <- arp_estimates(hc_r, pop_now, thr)
+stopifnot(
+  "Hindcast surface lacks cells the long-term surface covers" =
+    global(is.na(hc_r) != is.na(suit_r), "sum")[[1]] == 0,
+  "Hindcast surface with POP_FILE population differs from 18's row" =
+    all(abs(arp_hc_now[names(r18)] / r18 - 1) < 1e-9)
+)
+cat(hc_lab, "surface reproduces 18 (cells; estimates with", POP_YEAR, "population)\n")
+cat(sprintf("%s against the long-term means (18, domain): night LST %+.2f C, rainfall %+.0f mm\n",
+            hc_lab, row_18$lst_night - lt_18$lst_night, row_18$rainfall - lt_18$rainfall))
 
-# ========================= FIGURE ===========================================
+# ---------------------------- Hindcast population ----------------------------
+# Outside the domain is the Halaib Triangle, by design. Inside the domain
+# without a prediction are cells lacking a covariate (11: Red Sea coast).
 
-suit_colours <- c("#2166AC", "#67A9CF", "#D1E5F0", "#FDDBC7",
-                  "#EF8A62", "#B2182B")
+cat("\nWorldPop", hc_lab, ": aligning...\n")
+download_once(POP_HINDCAST_FILE, POP_HINDCAST_URL)
+al_hc  <- align_pop(rast(POP_HINDCAST_FILE), suit_r)
+pop_hc <- al_hc$pop
+tot_hc <- global(pop_hc, "sum", na.rm = TRUE)[[1]]
+in_dom <- global(mask(pop_hc, rast(DOMAIN_FILE), maskvalues = 0), "sum", na.rm = TRUE)[[1]]
+in_srf <- global(mask(pop_hc, suit_r), "sum", na.rm = TRUE)[[1]]
+cat(sprintf(paste0("WorldPop %s (unconstrained): %s | outside the domain %s | in the domain ",
+                   "without a prediction %s | with a prediction %s\n"),
+            hc_lab, fmt(al_hc$raw_total), fmt(tot_hc - in_dom), fmt(in_dom - in_srf), fmt(in_srf)))
 
-make_suit_map <- function(r, title) {
-  df <- as.data.frame(r, xy = TRUE)
-  names(df) <- c("x", "y", "suitability")
-  df <- df[!is.na(df$suitability), ]
+# ------------------------- National (context only) --------------------------
 
-  ggplot() +
-    geom_sf(data = sudan, fill = "grey90", colour = "grey30", linewidth = 0.5) +
-    geom_raster(data = df, aes(x = x, y = y, fill = suitability)) +
-    scale_fill_gradientn(colours = suit_colours, limits = c(0, 1),
-                         na.value = "transparent", name = "Suitability") +
-    geom_sf(data = sudan, fill = NA, colour = "grey30", linewidth = 0.5) +
-    coord_sf(xlim = c(21.5, 39), ylim = c(8.5, 23), crs = 4326) +
-    labs(title = title) +
-    theme_minimal() +
-    theme(panel.grid = element_blank(), axis.title = element_blank())
+nat_row <- function(surface, pop_year, surf_r, pop_r) {
+  a   <- arp_estimates(surf_r, pop_r, thr)
+  cov <- global(mask(pop_r, surf_r), "sum", na.rm = TRUE)[[1]]
+  data.frame(surface = surface, population = pop_year, pop_covered = cov,
+             risk_weighted = a[["risk_weighted"]], maxsss = a[["maxsss"]], p10 = a[["p10"]],
+             rw_pct_of_pop = 100 * a[["risk_weighted"]] / cov)
 }
+national <- bind_rows(
+  nat_row("long-term", POP_YEAR,      suit_r, pop_now),
+  nat_row("long-term", HINDCAST_YEAR, suit_r, pop_hc),
+  nat_row(hc_lab,      POP_YEAR,      hc_r,   pop_now),
+  nat_row(hc_lab,      HINDCAST_YEAR, hc_r,   pop_hc)) |>
+  group_by(population) |>
+  mutate(rw_pct_vs_long_term = 100 * (risk_weighted / risk_weighted[surface == "long-term"] - 1)) |>
+  ungroup() |> as.data.frame()
 
-p_2005 <- make_suit_map(pred_2005_full, "2005 (hindcast)")
-p_ltm  <- make_suit_map(pred_ltm, "Long-term mean (2000\u20132024)")
+cat("\nNational (context only; across population years, growth, redistribution and",
+    "the change of WorldPop product are mixed):\n")
+national |>
+  mutate(across(c(pop_covered, risk_weighted, maxsss, p10), fmt),
+         across(c(rw_pct_of_pop, rw_pct_vs_long_term), ~ round(., 1))) |>
+  print(row.names = FALSE)
 
-p_hindcast <- (p_2005 | p_ltm) +
-  plot_annotation(title = "MaxEnt suitability: 2005 hindcast vs. long-term mean")
+# ---------------------------------- Gedaref ----------------------------------
 
-ggsave(file.path(DIR_FIGS, "suitability_2005_vs_ltm.png"), p_hindcast,
-       width = 14, height = 7, dpi = 300, bg = "white")
-cat("Saved suitability_2005_vs_ltm.png\n")
+zones <- state_zones(suit_r)
+stopifnot("ALVAR_STATE is not a state in ADM1_FILE" = ALVAR_STATE %in% levels(zones)[[1]][[2]])
+occ_state <- as.character(terra::extract(
+  zones, as.matrix(train$occ_clean[, c("longitude", "latitude")]))[, 1])
+cat("\nTraining presences in", ALVAR_STATE, ":", sum(occ_state == ALVAR_STATE, na.rm = TRUE),
+    "of", nrow(train$occ_clean), "\n")
 
+lay <- c(pop_hc, pop_hc * suit_r, pop_hc * (suit_r >= thr[["maxsss"]]),
+         pop_hc * hc_r, pop_hc * (hc_r >= thr[["maxsss"]]), pop_now)
+names(lay) <- c("pop_hc", "rw_ltm", "maxsss_ltm", "rw_hc", "maxsss_hc", "pop_now")
+st <- zonal(lay, zones, fun = "sum", na.rm = TRUE)
+names(st)[1] <- "state"
+nat_hc <- national[national$population == HINDCAST_YEAR, ]
+stopifnot("State estimates do not sum to the national estimates" =
+  abs(sum(st$rw_ltm) / nat_hc$risk_weighted[nat_hc$surface == "long-term"] - 1) < POP_TOL &&
+  abs(sum(st$rw_hc)  / nat_hc$risk_weighted[nat_hc$surface == hc_lab]      - 1) < POP_TOL)
+g <- st[st$state == ALVAR_STATE, ]
+
+gedaref <- data.frame(
+  source   = c(rep("This model, long-term surface", 2),
+               rep(paste0("This model, ", hc_lab, " surface"), 2), "Alvar et al. 2006"),
+  measure  = c(rep(c("risk-weighted index", "people in cells >= maxSSS"), 2),
+               "people at risk (undefined)"),
+  estimate = c(g$rw_ltm, g$maxsss_ltm, g$rw_hc, g$maxsss_hc, ALVAR_STATE_ARP)) |>
+  mutate(pct_of_state_pop = 100 * estimate / g$pop_hc,
+         ratio_to_alvar   = estimate / ALVAR_STATE_ARP)
+
+cat(sprintf("%s population (WorldPop): %s %s | %d %s\n", ALVAR_STATE,
+            hc_lab, fmt(g$pop_hc), POP_YEAR, fmt(g$pop_now)))
+cat("With", hc_lab, "population (descriptive; reading in the header):\n")
+gedaref |>
+  mutate(estimate = fmt(estimate), pct_of_state_pop = round(pct_of_state_pop, 1),
+         ratio_to_alvar = round(ratio_to_alvar, 2)) |>
+  print(row.names = FALSE)
+
+# --------------------------------- Save -------------------------------------
+
+write.csv(national, file.path(DIR_TABLES, "hindcast_national.csv"),      row.names = FALSE)
+write.csv(gedaref,  file.path(DIR_TABLES, "hindcast_gedaref.csv"),       row.names = FALSE)
+write.csv(lit,      file.path(DIR_TABLES, "arp_literature_context.csv"), row.names = FALSE)
 cat("\n19_hindcast.R complete\n")

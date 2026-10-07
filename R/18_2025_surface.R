@@ -41,11 +41,7 @@ arp_08 <- read.csv(file.path(DIR_TABLES, "arp_summary.csv"))
 
 dyn   <- intersect(vars, names(COV_ANNUAL))
 years <- sort(unique(c(read.csv(OCC_RAW_FILE)$year, PROJ_YEAR)))
-year_files <- function(y) {
-  f <- COV_FILES
-  f[dyn] <- sub("{year}", y, COV_ANNUAL[dyn], fixed = TRUE)
-  f
-}
+
 need    <- unlist(lapply(years, function(y) year_files(y)[dyn]))
 missing <- need[!file.exists(file.path(DIR_COVARIATES, need))]
 stopifnot(
